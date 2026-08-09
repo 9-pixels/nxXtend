@@ -11,7 +11,7 @@ HEADERS = {
 def stable_search(pkg_name: str) -> list[Package]:
     response = requests.post(URL, headers=HEADERS, json={
     "query": {"multi_match": {"query": pkg_name, "fields": ["package_attr_name", "package_pname", "package_description"]}},
-    "size": 50
+    "size": 500
     })
 
     data = response.json()
