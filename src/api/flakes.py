@@ -5,12 +5,19 @@ import platform
 
 SYSTEM = f"{platform.machine()}-linux"
 
-def flake_search(flake_url: str, pkg_name: str) -> list[Package]:
-    result = subprocess.run(
-        ["nix", "flake", "show", "--json", flake_url],
+def flake_search(flake_url: str) -> list[Package]:
+    try:
+        result = subprocess.run(
+        ["nix", "flake", "show", "--json", "--no-write-lock-file", flake_url],
         capture_output=True,
-        text=True
-    )
+        text=True,
+        timeout=30
+        )  
+    except subprocess.TimeoutExpired:
+        return []
+    if result.returncode != 0 or not result.stdout.strip():
+        return []
+
     data = json.loads(result.stdout)
 
     system_pkgs = data.get("packages", {}).get(SYSTEM, {})
