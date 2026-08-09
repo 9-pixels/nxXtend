@@ -7,4 +7,4 @@ class Package:
     description: str | None
     source: str
     type: str | None
-    attribute: str | None  # للاستخدام الداخلي فقط
+    attribute: str | None  # For internal use only

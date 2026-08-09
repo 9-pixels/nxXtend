@@ -23,10 +23,10 @@ def flake_search(flake_url: str) -> list[Package]:
     system_pkgs = data.get("packages", {}).get(SYSTEM, {})
 
     if SYSTEM == "x86_64-linux":
-        # نتجاهل الفارغة
+        # Ignore empty ones
         pkgs = {k: v for k, v in system_pkgs.items() if v}
     else:
-        # نعرض كل شيء حتى بدون وصف
+        # Show everything even without description
         pkgs = system_pkgs
     packages = []
     for pkg_attr, pkg_info in pkgs.items():
