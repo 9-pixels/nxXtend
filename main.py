@@ -1,5 +1,7 @@
-from src.api.flakes import flake_search
+from src.core.manager import search
+import curses
+from src.ui.display import show_results
 
-results = flake_search("github:Ayman-pixels-33/nix-test")
-for pkg in results:
-    print(pkg.name, pkg.version, pkg.description)
+stable, unstable = search("steam")
+selected = show_results(stable)
+print(f"selected: {[p.name for p in selected]}")
