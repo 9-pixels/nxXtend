@@ -7,4 +7,5 @@ class Package:
     description: str | None
     source: str
     type: str | None
-    attribute: str | None  # For internal use only
+    attribute: str | None
+    install_type: str | None = None
