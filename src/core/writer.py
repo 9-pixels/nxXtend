@@ -169,3 +169,57 @@ def add_package(content: str, pkg_name: str, config_dir: Path) -> str:
     else:
         print("لم أتمكن من التعرف على شكل الملف — أضف الحزمة يدوياً")
         return content
+
+def remove_package(content: str, pkg_name: str, config_dir: Path) -> tuple[str, bool]:
+    fmt = detect_format(content)
+    
+    if fmt == "external":
+        # نتبع الملف الخارجي
+        match = re.search(r'systemPackages\s*=\s*import\s+(\./\S+)', content)
+        if not match:
+            return content, False
+        external_path = config_dir / match.group(1).lstrip('./')
+        ext_content = external_path.read_text()
+        new_ext, found = remove_package(ext_content, pkg_name, external_path.parent)
+        if found:
+            external_path.write_text(new_ext)
+        return content, found
+    
+    if fmt == "missing":
+        return content, False
+    
+    # نجد نطاق systemPackages
+    if fmt == "with_pkgs":
+        match = re.search(r'systemPackages\s*=\s*with pkgs;\s*\[', content)
+    else:
+        match = re.search(r'systemPackages\s*=\s*\[', content)
+    
+    if not match:
+        return content, False
+    
+    # نجد نهاية النطاق بتتبع الأقواس
+    pos = match.end()
+    depth = 1
+    while pos < len(content) and depth > 0:
+        if content[pos] == '[': depth += 1
+        elif content[pos] == ']': depth -= 1
+        pos += 1
+    
+    start = match.end()
+    end = pos - 1
+    
+    # نحذف فقط داخل النطاق
+    inner = content[start:end]
+    lines = inner.split('\n')
+    new_lines = []
+    found = False
+    
+    for line in lines:
+        stripped = line.strip()
+        if stripped == pkg_name or stripped == f"pkgs.{pkg_name}":
+            found = True
+            continue
+        new_lines.append(line)
+    
+    new_inner = '\n'.join(new_lines)
+    return content[:start] + new_inner + content[end:], found
