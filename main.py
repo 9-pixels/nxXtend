@@ -1,8 +1,9 @@
-from src.core.manager import search
-import curses
-from src.ui.display import show_results
+from src.core.writer import remove_package
+from pathlib import Path
 
-rr = input("what is the rep : ")
-stable, unstable = search(rr)
-selected = show_results(stable)
-print(f"selected: {[p.name for p in selected]}")
+config = Path("/etc/nixos-test/configuration.nix")
+content = config.read_text()
+new_content, found = remove_package(content, "flatpak", config.parent)
+print(f"found: {found}")
+config.write_text(new_content)
+print(new_content)
