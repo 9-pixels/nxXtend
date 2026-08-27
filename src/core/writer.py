@@ -223,3 +223,42 @@ def remove_package(content: str, pkg_name: str, config_dir: Path) -> tuple[str, 
     
     new_inner = '\n'.join(new_lines)
     return content[:start] + new_inner + content[end:], found
+
+def is_valid_name(pkg_name: str) -> bool:
+    return bool(re.match(r'^[a-zA-Z0-9_-]+$', pkg_name))
+def is_package_exists(content: str, pkg_name: str, config_dir: Path) -> bool:
+    fmt = detect_format(content)
+    
+    if fmt == "missing" or fmt == "empty":
+        return False
+    
+    if fmt == "external":
+        match = re.search(r'systemPackages\s*=\s*import\s+(\.\/\S+)', content)
+        if not match:
+            return False
+        external_path = config_dir / match.group(1).lstrip('./')
+        return is_package_exists(external_path.read_text(), pkg_name, external_path.parent)
+    
+    if fmt == "with_pkgs":
+        match = re.search(r'systemPackages\s*=\s*with pkgs;\s*\[', content)
+    else:
+        match = re.search(r'systemPackages\s*=\s*\[', content)
+    
+    if not match:
+        return False
+    
+    pos = match.end()
+    depth = 1
+    while pos < len(content) and depth > 0:
+        if content[pos] == '[': depth += 1
+        elif content[pos] == ']': depth -= 1
+        pos += 1
+    
+    inner = content[match.end():pos - 1]
+    
+    for line in inner.split('\n'):
+        stripped = line.strip()
+        if stripped == pkg_name or stripped == f"pkgs.{pkg_name}":
+            return True
+    
+    return False
