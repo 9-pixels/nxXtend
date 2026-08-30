@@ -2,7 +2,7 @@ import readchar
 import os
 from rich.table import Table
 from rich.console import Console
-from rich import box
+from src.models.package import Package
 
 
 console = Console()
@@ -12,6 +12,9 @@ def show_searching(source: str):
 
 def show_done(source: str):
     console.print(f"  searching in {source}...     ✓")
+
+def show_no_results(query: str):
+    console.print(f"\n  no results found for \"{query}\"\n")
 
 def show_source_select(stable_count: int, unstable_count: int) -> int:
     console.print()
@@ -64,7 +67,7 @@ def show_results(packages: list[Package]) -> list[Package]:
                 pass
 
     return selected
-    
+
 def show_summary(packages: list[Package]) -> bool:
     console.print()
     console.print("  ┌─ summary " + "─" * 35 + "┐")
@@ -80,3 +83,12 @@ def show_summary(packages: list[Package]) -> bool:
             return True
         elif choice == 'n':
             return False
+
+def show_rebuild_start():
+    console.print("\n  running nixos-rebuild switch...\n")
+
+def show_rebuild_done(success: bool):
+    if success:
+        console.print("\n  ✓ done.\n")
+    else:
+        console.print("\n  ✗ nixos-rebuild failed — changes reverted.\n")
