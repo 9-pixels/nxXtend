@@ -3,7 +3,7 @@ from pathlib import Path
 
 config = Path("/etc/nixos-test/configuration.nix")
 content = config.read_text()
-new_content, found = remove_package(content, "flatpak", config.parent)
+new_content, found = remove_package(content, "waydroid", config.parent)
 print(f"found: {found}")
 config.write_text(new_content)
 print(new_content)

@@ -18,4 +18,7 @@ def deduplicate(packages):
 def search(pkg_name: str):
     stable_results = deduplicate(stable_search(pkg_name))
     unstable_results = deduplicate(unstable_search(pkg_name))
-    return stable_results, unstable_results
+    return {
+        "stable": stable_results,
+        "unstable": unstable_results
+    }
