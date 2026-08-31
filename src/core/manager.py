@@ -2,10 +2,6 @@ from src.api.stable import stable_search
 from src.api.unstable import unstable_search
 from src.api.flakes import flake_search
 
-
-def flake_install(flake_url: str):
-    return flake_search(flake_url)
-
 def deduplicate(packages):
     seen = set()
     result = []
@@ -16,9 +12,10 @@ def deduplicate(packages):
     return result
 
 def search(pkg_name: str):
-    stable_results = deduplicate(stable_search(pkg_name))
-    unstable_results = deduplicate(unstable_search(pkg_name))
-    return {
-        "stable": stable_results,
-        "unstable": unstable_results
-    }
+    stable = deduplicate(stable_search(pkg_name))
+    yield "stable", stable
+    unstable = deduplicate(unstable_search(pkg_name))
+    yield "unstable", unstable
+
+def search_flake(flake_url: str):
+    return flake_search(flake_url)
