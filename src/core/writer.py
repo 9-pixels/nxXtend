@@ -21,11 +21,11 @@ def detect_format(content: str) -> str:
     else:
         return "with_pkgs"  # default
 
-def read_config() -> str:
-    return CONFIG_PATH.read_text()
+def read_config(path: Path) -> str:
+    return path.read_text()
 
-def backup_config():
-    shutil.copy2(CONFIG_PATH, BACKUP_PATH)
+def backup_config(path: Path):
+    shutil.copy2(path, path.with_suffix('.nix.bak'))
 
 def restore_backup():
     shutil.copy2(BACKUP_PATH, CONFIG_PATH)

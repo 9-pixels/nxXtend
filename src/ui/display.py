@@ -3,12 +3,23 @@ import os
 from rich.table import Table
 from rich.console import Console
 from src.models.package import Package
+import termios
+import tty
+import sys
 
+def _get_terminal_settings():
+    return termios.tcgetattr(sys.stdin.fileno())
+
+def _set_raw():
+    tty.setraw(sys.stdin.fileno())
+
+def _restore(settings):
+    termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, settings)
 
 console = Console()
 
 def show_searching(source: str):
-    console.print(f"  searching in {source}...", end="\r", flush=True)
+    console.print(f"  searching in {source}...", end="\r")
 
 def show_done(source: str):
     console.print(f"  searching in {source}...     ✓")
@@ -28,6 +39,28 @@ def show_source_select(stable_count: int, unstable_count: int) -> int:
         if choice in ("0", "1", "2"):
             return int(choice)
         console.print("  [red]invalid — 0, 1, or 2 only[/red]")
+        
+def _render_page(packages, page, PAGE_SIZE, selected, total_pages):
+    start = page * PAGE_SIZE
+    end = min(start + PAGE_SIZE, len(packages))
+
+    table = Table(box=None, show_header=True, header_style="bold")
+    table.add_column("#", width=4)
+    table.add_column("Name", width=30)
+    table.add_column("Version", width=15)
+
+    for i, pkg in enumerate(packages[start:end]):
+        num = start + i + 1
+        suffix = "  <- default" if num == 1 else ""
+        table.add_row(
+            str(num),
+            pkg.name + suffix,
+            pkg.version or "—"
+        )
+
+    console.print(table)
+    console.print(f"  ── page {page+1}/{total_pages} ── (n) next  (p) prev")
+    console.print(f"\n  select (y / n / 1,2,3): ", end="")
 
 def show_results(packages: list[Package]) -> list[Package]:
     PAGE_SIZE = 17
@@ -39,7 +72,10 @@ def show_results(packages: list[Package]) -> list[Package]:
         console.clear()
         _render_page(packages, page, PAGE_SIZE, selected, total_pages)
 
-        key = readchar.readkey()
+        settings = _get_terminal_settings()
+        _set_raw()
+        key = sys.stdin.read(1)
+        _restore(settings)
 
         if key == 'n':
             if page < total_pages - 1:
@@ -53,8 +89,14 @@ def show_results(packages: list[Package]) -> list[Package]:
             break
         elif key == 'q':
             break
+        elif key in ('\r', '\n'):
+            if selected:
+                break
         elif key.isdigit():
-            rest = input(key)
+            _restore(settings)
+            sys.stdout.write(key)
+            sys.stdout.flush()
+            rest = input()
             raw = key + rest
             try:
                 nums = [int(x.strip()) for x in raw.split(',')]
