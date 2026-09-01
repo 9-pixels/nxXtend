@@ -1,136 +1,146 @@
-import readchar
-import os
-from rich.table import Table
-from rich.console import Console
-from src.models.package import Package
-import termios
-import tty
+import curses
 import sys
+from src.models.package import Package
 
-def _get_terminal_settings():
-    return termios.tcgetattr(sys.stdin.fileno())
-
-def _set_raw():
-    tty.setraw(sys.stdin.fileno())
-
-def _restore(settings):
-    termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, settings)
-
-console = Console()
+PAGE_SIZE = 17
 
 def show_searching(source: str):
-    console.print(f"  searching in {source}...", end="\r")
+    print(f"  searching in {source}...", end="\r", flush=True)
 
 def show_done(source: str):
-    console.print(f"  searching in {source}...     ✓")
+    print(f"  searching in {source}...     ✓")
 
 def show_no_results(query: str):
-    console.print(f"\n  no results found for \"{query}\"\n")
+    print(f"\n  no results found for \"{query}\"\n")
 
 def show_source_select(stable_count: int, unstable_count: int) -> int:
-    console.print()
-    console.print(f"  [1] Stable    ({stable_count})")
-    console.print(f"  [2] Unstable  ({unstable_count})")
-    console.print(f"  [0] Cancel")
-    console.print()
-    
+    print()
+    print(f"  [1] Stable    ({stable_count})")
+    print(f"  [2] Unstable  ({unstable_count})")
+    print(f"  [0] Cancel")
+    print()
+
     while True:
         choice = input("  Choose source: ").strip()
         if choice in ("0", "1", "2"):
             return int(choice)
-        console.print("  [red]invalid — 0, 1, or 2 only[/red]")
-        
-def _render_page(packages, page, PAGE_SIZE, selected, total_pages):
-    start = page * PAGE_SIZE
-    end = min(start + PAGE_SIZE, len(packages))
-
-    table = Table(box=None, show_header=True, header_style="bold")
-    table.add_column("#", width=4)
-    table.add_column("Name", width=30)
-    table.add_column("Version", width=15)
-
-    for i, pkg in enumerate(packages[start:end]):
-        num = start + i + 1
-        suffix = "  <- default" if num == 1 else ""
-        table.add_row(
-            str(num),
-            pkg.name + suffix,
-            pkg.version or "—"
-        )
-
-    console.print(table)
-    console.print(f"  ── page {page+1}/{total_pages} ── (n) next  (p) prev")
-    console.print(f"\n  select (y / n / 1,2,3): ", end="")
+        print("  invalid — 0, 1, or 2 only")
 
 def show_results(packages: list[Package]) -> list[Package]:
-    PAGE_SIZE = 17
+    return curses.wrapper(_show_results_curses, packages)
+
+def _show_results_curses(stdscr, packages: list[Package]) -> list[Package]:
+    # ─── الحل الأساسي ───
+    curses.use_default_colors()   # استخدام ألوان التيرمينال الافتراضية بدلاً من الأسود
+    curses.curs_set(0)
+    stdscr.keypad(True)
+
     page = 0
     selected = []
     total_pages = (len(packages) + PAGE_SIZE - 1) // PAGE_SIZE
+    input_buf = ""
 
     while True:
-        console.clear()
-        _render_page(packages, page, PAGE_SIZE, selected, total_pages)
+        stdscr.erase()            # تمسح الذاكرة الداخلية فقط (بدون أمر مسح للتيرمينال)
+        height, width = stdscr.getmaxyx()
 
-        settings = _get_terminal_settings()
-        _set_raw()
-        key = sys.stdin.read(1)
-        _restore(settings)
+        # العناوين
+        stdscr.addstr(0, 2, f"{'#':<5}{'Name':<32}{'Version':<16}")
+        stdscr.addstr(1, 2, "─" * (width - 4))
 
-        if key == 'n':
+        # الحزم
+        start = page * PAGE_SIZE
+        end = min(start + PAGE_SIZE, len(packages))
+
+        for i, pkg in enumerate(packages[start:end]):
+            num = start + i + 1
+            row = i + 2
+            name = (pkg.name[:28] + "..") if len(pkg.name) > 30 else pkg.name
+            version = (pkg.version or "—")[:14]
+            line = f"{num:<5}{name:<32}{version:<16}"
+            stdscr.addstr(row, 2, line)
+            if num == 1:
+                stdscr.addstr(row, 2 + len(line), "<-- default")
+
+        # التنقل
+        nav_row = end - start + 3
+        stdscr.addstr(nav_row, 2, f"── page {page+1}/{total_pages} ── (n) next  (p) prev")
+
+        # المحدد
+        selected_row = nav_row + 1
+        selected_names = ", ".join(p.name for p in selected) if selected else "none"
+        stdscr.addstr(selected_row, 2, f"selected: {selected_names}")
+
+        # الإدخال
+        input_row = selected_row + 2
+        stdscr.addstr(input_row, 2, f"select (y / q / 1,2,3): {input_buf}")
+
+        curses.curs_set(1)
+        stdscr.move(input_row, 2 + len(f"select (y / q / 1,2,3): {input_buf}"))
+
+        stdscr.refresh()
+
+        key = stdscr.getch()
+
+        if key == ord('n'):
             if page < total_pages - 1:
                 page += 1
-        elif key == 'p':
+            input_buf = ""
+        elif key == ord('p'):
             if page > 0:
                 page -= 1
-        elif key == 'y':
-            if packages:
-                selected = [packages[0]]
-            break
-        elif key == 'q':
-            break
-        elif key in ('\r', '\n'):
-            if selected:
+            input_buf = ""
+        elif key == ord('y') or key == 10 or key == 13:
+            if input_buf:
+                try:
+                    nums = [int(x.strip()) for x in input_buf.split(',')]
+                    for num in nums:
+                        if 1 <= num <= len(packages):
+                            pkg = packages[num - 1]
+                            if pkg not in selected:
+                                selected.append(pkg)
+                except ValueError:
+                    pass
+                input_buf = ""
+            else:
+                if not selected and packages:
+                    selected = [packages[0]]
                 break
-        elif key.isdigit():
-            _restore(settings)
-            sys.stdout.write(key)
-            sys.stdout.flush()
-            rest = input()
-            raw = key + rest
-            try:
-                nums = [int(x.strip()) for x in raw.split(',')]
-                for num in nums:
-                    if 1 <= num <= len(packages):
-                        pkg = packages[num - 1]
-                        if pkg not in selected:
-                            selected.append(pkg)
-            except ValueError:
-                pass
+        elif key == ord('q'):
+            selected = []
+            break
+        elif key == curses.KEY_BACKSPACE or key == 127:
+            input_buf = input_buf[:-1]
+        elif 48 <= key <= 57 or key == ord(','):
+            input_buf += chr(key)
 
     return selected
 
 def show_summary(packages: list[Package]) -> bool:
-    console.print()
-    console.print("  ┌─ summary " + "─" * 35 + "┐")
+    max_name = max(len(pkg.name) for pkg in packages)
+    max_version = max(len(pkg.version or "—") for pkg in packages)
+    width = max_name + max_version + 20
+
+    print()
+    print(f"  ┌─ summary {'─' * width}┐")
     for pkg in packages:
-        line = f"  + {pkg.name:<20} {pkg.version or '—':<12} {pkg.source}"
-        console.print(f"  │  {line:<43}│")
-    console.print("  └" + "─" * 45 + "┘")
-    console.print()
+        line = f"+ {pkg.name:<{max_name}}  {(pkg.version or '—'):<{max_version}}  {pkg.source}"
+        print(f"  │  {line:<{width}}│")
+    print(f"  └{'─' * (width + 2)}┘")
+    print()
 
     while True:
         choice = input("  confirm? (y/n): ").strip().lower()
-        if choice == 'y':
+        if choice in ('y', ''):
             return True
         elif choice == 'n':
             return False
 
 def show_rebuild_start():
-    console.print("\n  running nixos-rebuild switch...\n")
+    print("\n  running nixos-rebuild switch...\n")
 
 def show_rebuild_done(success: bool):
     if success:
-        console.print("\n  ✓ done.\n")
+        print("\n  ✓ done.\n")
     else:
-        console.print("\n  ✗ nixos-rebuild failed — changes reverted.\n")
+        print("\n  ✗ nixos-rebuild failed — changes reverted.\n")
