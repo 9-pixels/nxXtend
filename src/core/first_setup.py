@@ -83,3 +83,20 @@ def page_welcome(stdscr):
         key = stdscr.getch()
         if key in (10, 13):
             break
+def page_flakes(stdscr) -> bool:
+    stdscr.erase()
+    height, width = stdscr.getmaxyx()
+    
+    draw_header(stdscr, 2, 5)
+    
+    draw_text(stdscr, 4, 4, "do you use flakes?")
+    draw_text(stdscr, 6, 4, "flakes are a modern way to manage NixOS configurations.")
+    draw_text(stdscr, 7, 4, "they give you reproducible builds and access to more packages.")
+    draw_text(stdscr, 8, 4, "if you're not sure, check if you have a")
+    draw_highlight(stdscr, 8, 44, "flake.nix")
+    draw_text(stdscr, 8, 53, "in your config folder.")
+    
+    draw_footer(stdscr, "y / n")
+    stdscr.refresh()
+    
+    return input_yes_no(stdscr)
