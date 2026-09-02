@@ -65,7 +65,7 @@ def handle_remove(pkg_name: str):
         console.print(f"\n  package '{pkg_name}' not found in configuration\n")
         return
 
-    backup_config()
+    backup_config(CONFIG)
     new_content, found = remove_package(content, pkg_name, CONFIG.parent)
     
     if not found:
