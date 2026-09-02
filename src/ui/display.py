@@ -30,8 +30,7 @@ def show_results(packages: list[Package]) -> list[Package]:
     return curses.wrapper(_show_results_curses, packages)
 
 def _show_results_curses(stdscr, packages: list[Package]) -> list[Package]:
-    # ─── الحل الأساسي ───
-    curses.use_default_colors()   # استخدام ألوان التيرمينال الافتراضية بدلاً من الأسود
+    curses.use_default_colors()
     curses.curs_set(0)
     stdscr.keypad(True)
 
@@ -40,13 +39,18 @@ def _show_results_curses(stdscr, packages: list[Package]) -> list[Package]:
     total_pages = (len(packages) + PAGE_SIZE - 1) // PAGE_SIZE
     input_buf = ""
 
+    COL_NUM = 5
+    COL_NAME = 32
+    COL_VERSION = 16
+    TABLE_WIDTH = COL_NUM + COL_NAME + COL_VERSION
+
     while True:
-        stdscr.erase()            # تمسح الذاكرة الداخلية فقط (بدون أمر مسح للتيرمينال)
+        stdscr.erase()
         height, width = stdscr.getmaxyx()
 
         # العناوين
-        stdscr.addstr(0, 2, f"{'#':<5}{'Name':<32}{'Version':<16}")
-        stdscr.addstr(1, 2, "─" * (width - 4))
+        stdscr.addstr(0, 2, f"{'#':<{COL_NUM}}{'Name':<{COL_NAME}}{'Version':<{COL_VERSION}}")
+        stdscr.addstr(1, 2, "─" * TABLE_WIDTH)
 
         # الحزم
         start = page * PAGE_SIZE
@@ -57,7 +61,7 @@ def _show_results_curses(stdscr, packages: list[Package]) -> list[Package]:
             row = i + 2
             name = (pkg.name[:28] + "..") if len(pkg.name) > 30 else pkg.name
             version = (pkg.version or "—")[:14]
-            line = f"{num:<5}{name:<32}{version:<16}"
+            line = f"{num:<{COL_NUM}}{name:<{COL_NAME}}{version:<{COL_VERSION}}"
             stdscr.addstr(row, 2, line)
             if num == 1:
                 stdscr.addstr(row, 2 + len(line), "<-- default")
@@ -77,7 +81,6 @@ def _show_results_curses(stdscr, packages: list[Package]) -> list[Package]:
 
         curses.curs_set(1)
         stdscr.move(input_row, 2 + len(f"select (y / q / 1,2,3): {input_buf}"))
-
         stdscr.refresh()
 
         key = stdscr.getch()
@@ -117,16 +120,11 @@ def _show_results_curses(stdscr, packages: list[Package]) -> list[Package]:
     return selected
 
 def show_summary(packages: list[Package]) -> bool:
-    max_name = max(len(pkg.name) for pkg in packages)
-    max_version = max(len(pkg.version or "—") for pkg in packages)
-    width = max_name + max_version + 20
-
     print()
-    print(f"  ┌─ summary {'─' * width}┐")
+    print("  summary:")
+    print()
     for pkg in packages:
-        line = f"+ {pkg.name:<{max_name}}  {(pkg.version or '—'):<{max_version}}  {pkg.source}"
-        print(f"  │  {line:<{width}}│")
-    print(f"  └{'─' * (width + 2)}┘")
+        print(f"    + {pkg.name}  {pkg.version or '—'}  {pkg.source}")
     print()
 
     while True:
@@ -135,7 +133,7 @@ def show_summary(packages: list[Package]) -> bool:
             return True
         elif choice == 'n':
             return False
-
+            
 def show_rebuild_start():
     print("\n  running nixos-rebuild switch...\n")
 
