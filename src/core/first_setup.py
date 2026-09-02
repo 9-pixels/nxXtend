@@ -100,3 +100,36 @@ def page_flakes(stdscr) -> bool:
     stdscr.refresh()
     
     return input_yes_no(stdscr)
+
+def input_yes_no(stdscr) -> bool:
+    while True:
+        key = stdscr.getch()
+        if key == ord('y') or key == 10 or key == 13:
+            return True
+        elif key == ord('n'):
+            return False
+
+def page_flakes_type(stdscr) -> int:
+    stdscr.erase()
+    height, width = stdscr.getmaxyx()
+    
+    draw_header(stdscr, 3, 5)
+    
+    draw_text(stdscr, 4, 4, "how do you manage your flakes?")
+    
+    draw_text(stdscr, 6, 4, "[1]")
+    draw_highlight(stdscr, 6, 8, "configuration.nix + flake.nix")
+    draw_text(stdscr, 7, 8, "packages and flakes in their original files")
+    
+    draw_text(stdscr, 9, 4, "[2]")
+    draw_highlight(stdscr, 9, 8, "configuration.nix + flake.nix + home.nix")
+    draw_text(stdscr, 10, 8, "user packages go in home.nix")
+    
+    draw_text(stdscr, 12, 4, "[3]")
+    draw_highlight(stdscr, 12, 8, "configuration.nix + flake.nix + nx-flakes.nix")
+    draw_text(stdscr, 13, 8, "nx manages flakes in a separate file")
+    
+    draw_footer(stdscr, "choose (1 / 2 / 3)")
+    stdscr.refresh()
+    
+    return input_choice(stdscr, ["1", "2", "3"])
