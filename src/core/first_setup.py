@@ -1,5 +1,7 @@
 import curses
 from pathlib import Path
+from src.core.config import save_config
+
 
 def draw_header(stdscr, page: int, total: int):
     height, width = stdscr.getmaxyx()
@@ -18,8 +20,10 @@ def draw_footer(stdscr, hint: str):
     stdscr.addstr(height - 2, 2, "─" * (width - 4))
     stdscr.addstr(height - 1, 2, hint)
 
-def first_setup():
-    return curses.wrapper(_setup)
+def first_setup() -> dict:
+    result = curses.wrapper(_setup)
+    save_config(result["mode"], result["use_flakes"], result["config_path"])
+    return result
 
 def _setup(stdscr) -> dict:
     init_colors()
@@ -45,7 +49,7 @@ def _setup(stdscr) -> dict:
 
 def first_setup() -> dict:
     return curses.wrapper(_setup)
-    
+
 def init_colors():
     global GREEN
     curses.start_color()
