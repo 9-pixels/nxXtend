@@ -147,3 +147,22 @@ def page_config_path(stdscr) -> str:
     stdscr.refresh()
     
     return input_text(stdscr, 8, 4, "/etc/nixos")
+
+def input_text(stdscr, row: int, col: int, default: str) -> str:
+    buf = ""
+    prompt = f"  path [{default}]: "
+    
+    while True:
+        stdscr.move(row, col)
+        stdscr.clrtoeol()
+        stdscr.addstr(row, col, prompt + buf)
+        stdscr.refresh()
+        
+        key = stdscr.getch()
+        
+        if key in (10, 13):
+            return buf if buf else default
+        elif key in (curses.KEY_BACKSPACE, 127):
+            buf = buf[:-1]
+        elif 33 <= key <= 126:
+            buf += chr(key)
