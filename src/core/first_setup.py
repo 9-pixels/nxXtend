@@ -166,3 +166,52 @@ def input_text(stdscr, row: int, col: int, default: str) -> str:
             buf = buf[:-1]
         elif 33 <= key <= 126:
             buf += chr(key)
+
+def page_commands(stdscr, use_flakes: bool, mode: int):
+    stdscr.erase()
+    height, width = stdscr.getmaxyx()
+    
+    draw_header(stdscr, 5, 5)
+    
+    draw_text(stdscr, 4, 4, "here's what you can do with nx:")
+    
+    row = 6
+    draw_highlight(stdscr, row, 4, "nx install [pkg]")
+    draw_text(stdscr, row, 24, "search and install a package")
+    
+    row += 1
+    draw_highlight(stdscr, row, 4, "nx remove [pkg]")
+    draw_text(stdscr, row, 24, "remove a package")
+    
+    row += 1
+    draw_highlight(stdscr, row, 4, "nx upgrade")
+    draw_text(stdscr, row, 24, "rebuild your system")
+    
+    if use_flakes:
+        row += 1
+        draw_highlight(stdscr, row, 4, "nx upgrade --flakes")
+        draw_text(stdscr, row, 24, "update flakes then rebuild")
+        
+        row += 1
+        if mode == 4:
+            draw_highlight(stdscr, row, 4, "nx flakes [url]")
+            draw_text(stdscr, row, 24, "install from a flake (saved to nx-flakes.nix)")
+        else:
+            draw_highlight(stdscr, row, 4, "nx flakes [url]")
+            draw_text(stdscr, row, 24, "install from a flake")
+        
+        if mode == 3:
+            row += 2
+            draw_text(stdscr, row, 4, "note: nx will ask where to install — system or user")
+
+    row += 2
+    draw_text(stdscr, row, 4, "for all available commands, run")
+    draw_highlight(stdscr, row, 35, "nx --help")
+    
+    draw_footer(stdscr, "press Enter to finish")
+    stdscr.refresh()
+    
+    while True:
+        key = stdscr.getch()
+        if key in (10, 13):
+            break
