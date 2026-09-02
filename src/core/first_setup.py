@@ -133,3 +133,17 @@ def page_flakes_type(stdscr) -> int:
     stdscr.refresh()
     
     return input_choice(stdscr, ["1", "2", "3"])
+
+def page_config_path(stdscr) -> str:
+    stdscr.erase()
+    height, width = stdscr.getmaxyx()
+    
+    draw_header(stdscr, 4, 5)
+    
+    draw_text(stdscr, 4, 4, "where are your NixOS config files?")
+    draw_text(stdscr, 6, 4, "this is where nx will read and write your system files.")
+    
+    draw_footer(stdscr, "press Enter to use default")
+    stdscr.refresh()
+    
+    return input_text(stdscr, 8, 4, "/etc/nixos")
