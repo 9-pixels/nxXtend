@@ -21,26 +21,31 @@ def draw_footer(stdscr, hint: str):
 def first_setup():
     return curses.wrapper(_setup)
 
-def _setup(stdscr):
-    curses.use_default_colors()
-    curses.start_color()
-    curses.init_pair(1, curses.COLOR_GREEN, -1)  # الأخضر الهادئ
-    
+def _setup(stdscr) -> dict:
+    init_colors()
+    curses.curs_set(0)
+    stdscr.keypad(True)
+
     page_welcome(stdscr)
     use_flakes = page_flakes(stdscr)
-    
+
     if use_flakes:
-        mode = page_flakes_type(stdscr)
+        mode = page_flakes_type(stdscr) + 1  # 2, 3, أو 4
     else:
         mode = 1
-    
+
     config_path = page_config_path(stdscr)
-    page_commands(stdscr)
+    page_commands(stdscr, use_flakes, mode)
+
+    return {
+        "mode": mode,
+        "use_flakes": use_flakes,
+        "config_path": config_path
+    }
+
+def first_setup() -> dict:
+    return curses.wrapper(_setup)
     
-    return {"mode": mode, "config_path": config_path}
-
-GREEN = None
-
 def init_colors():
     global GREEN
     curses.start_color()
