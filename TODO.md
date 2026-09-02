@@ -1,157 +1,74 @@
-# TODO — nx (nix-install)
+# TODO — nx
 
-## ما تم بناؤه
+## ما تم بناؤه ✓
 
 - `src/models/package.py` — Package dataclass
 - `src/api/stable.py` — البحث في nixpkgs stable
 - `src/api/unstable.py` — البحث في nixpkgs unstable
 - `src/api/flakes.py` — استخراج حزم الـ flakes عبر `nix flake show --json`
-- `src/core/manager.py` — يجمع النتائج من المصادر
+- `src/core/manager.py` — البحث في المصادر بالتتابع مع generator
+- `src/core/config.py` — قراءة وكتابة `~/.config/nx/config.toml`
+- `src/core/writer.py` — تعديل `configuration.nix` (جزئي)
+- `src/ui/display.py` — واجهة curses كاملة مع pagination
+- `src/ui/first_setup.py` — صفحات السيتاب (جزئي)
+- `main.py` — argparse مع install/remove/upgrade (جزئي)
+- `pyproject.toml` — إعداد المشروع والـ dependencies
 
 ---
 
-## ما لم يُبنَ بعد
+## ما لم يكتمل بعد
 
-### ١. تعديل Package dataclass
+### ١. src/ui/first_setup.py
 
-- إضافة حقل `install_type: str` — قيمته `"package"` أو `"program"`
-- هذا يحدد كيف تُكتب الحزمة في ملفات النظام
+- ربط نتيجة `_setup` بـ `config.py` عبر `save_config`
 
-### ٢. تعديل stable.py و unstable.py
+### ٢. src/core/writer.py
 
-- البحث في **options** أيضاً بجانب packages
-- استخراج `install_type` لكل حزمة:
-    - `"package"` → تُضاف في `environment.systemPackages`
-    - `"program"` → تُضاف كـ `programs.x.enable = true`
+**الحالة 1 — بدون flakes:**
 
-### ٣. src/core/writer.py
+- `add_package` ✓ موجود
+- `remove_package` ✓ موجود
 
-أهم وأعقد ملف في المشروع — يتعامل مع تعديل ملفات النظام.
+**الحالة 2 — مع flakes:**
 
-**عند الإضافة في `configuration.nix`:**
-يتعامل مع كل أشكال كتابة `environment.systemPackages`:
+- `add_flake` في `flake.nix` ✗
+- `remove_flake` في `flake.nix` ✗
 
-- `with pkgs; [ vim git ]` ← الأكثر شيوعاً
-- `[ pkgs.vim pkgs.git ]` ← بدون with
-- `with pkgs; [ vim ] ++ with pkgs; [ git ]` ← دمج قوائم
-- `import ./packages.nix { inherit pkgs; }` ← ملف خارجي
-- `with pkgs; [ vim ] ++ import ./packages.nix` ← دمج مع خارجي
+**الحالة 3 — مع flakes + home-manager:**
 
-**عند الإضافة كـ program:**
+- `add_home_package` في `home.nix` ✗ (حالتان فقط: with_pkgs و explicit_pkgs)
+- `remove_home_package` في `home.nix` ✗
+- `add_flake` في `flake.nix` ✗
+- `remove_flake` في `flake.nix` ✗
 
-```nix
-programs.steam.enable = true;
-```
+**الحالة 4 — مع flakes + nx-flakes.nix:**
 
-**في `nix-install-flakes.nix`:**
+- `add_flake` في `nx-flakes.nix` ✗
+- `remove_flake` في `nx-flakes.nix` ✗
 
-- الملف موجود وفيه حزم → يضيف
-- الملف فارغ → ينشئ الهيكل ويضيف
-- الملف غير موجود → ينشئه من الصفر
+### ٣. main.py
 
-**عند الحذف:**
-
-- الحزمة موجودة → يحذفها
-- الحزمة غير موجودة → يخبر المستخدم
-- الحزمة الأخيرة في الملف → يسأل المستخدم
-
-**الأمان:**
-
-- نسخة احتياطية قبل أي تعديل
-- التراجع التلقائي إن فشل `nixos-rebuild`
-
-### ٤. src/ui/display.py
-
-- عرض نتائج البحث بـ pagination (17 حزمة لكل صفحة)
-- جدول: `#  Name  Version  Description`
-- التنقل: `(n) next  (p) prev  (q) done`
-- اختيار متعدد: `1,3,5`
-- عرض ملخص قبل التثبيت
-
-### ٥. main.py النهائي
-
-استقبال الأوامر عبر `argparse`:
-
-```
-sudo nx install [pkg]          — تثبيت حزمة
-sudo nx remove [pkg]           — حذف حزمة
-sudo nx upgrade                — nixos-rebuild switch
-sudo nx upgrade --flakes       — nix flake update + rebuild
-sudo nx flakes [flake_url]     — البحث في flake محدد وتثبيت
-sudo nx flakes remove [pkg]    — حذف flake من القائمة
-nx --help                      — المساعدة
-nx --upgrade                   — تحديث الأداة نفسها
-nx --uninstall                 — إزالة الأداة
-man nx                         — الدليل الكامل
-```
-
-### ٦. إعداد أول تشغيل
-
-عند أول `nx install` تسأل الأداة:
-
-```
-[1] ملف واحد — nix-install.nix (packages + flakes)
-[2] ملف للflakes فقط + packages في configuration.nix
-[3] ملف للpackages فقط + flakes في flake.nix
-[4] لا ملفات إضافية — كل شيء في ملفاته الأصلية
-```
-
-تحفظ الاختيار في `~/.config/nx/config.toml`
-
-### ٧. activation script في NixOS
-
-يشغّل عند كل `nixos-rebuild switch` — يُدفئ الـ nix eval-cache للـ flakes:
-
-```nix
-system.activationScripts.nx-cache = ''
-  python /path/to/nx/cache_update.py
-'';
-```
-
-تضيفه الأداة عند التثبيت وتحذفه عند `nx --uninstall`
-
-### ٨. man page
-
-صفحة دليل رسمية لـ `man nx`
+- قراءة `config.toml` عند كل تشغيل
+- تشغيل `first_setup` إن لم يوجد `config.toml`
+- تمرير الـ mode لكل handle function
+- `handle_upgrade` ✗
+- `handle_flakes` ✗ (هيكل فقط)
+- الحالة 3 — سؤال المستخدم: نظام أم مستخدم؟
 
 ---
 
-## ميزات مستقبلية
+## مستقبلي — ما بعد v1.0
 
-### تعليقات nx في ملفات النظام
+- `nx --upgrade` — تحديث الأداة نفسها
+- `nx --uninstall` — إزالة الأداة
+- `man nx` — صفحة الدليل
+- تعليقات `# nx-start` / `# nx-end` في ملفات النظام
+- دعم `programs.*` كـ install_type
+- كشف تعدد `systemPackages` في نفس الملف
+- activation script للـ nix eval-cache
 
-الأداة تضيف تعليقين يحددان نطاق الحزم التي أضافتها:
+## أمان — قبل الإطلاق ⚠️
 
-```nix
-environment.systemPackages = with pkgs; [
-  vim
-  git
-
-  # nx-start
-  steam
-  protonup-qt
-  # nx-end
-];
-```
-
-- عند أول إضافة: تُنشئ `# nx-start` و`# nx-end` مع الحزمة
-- عند كل إضافة بعدها: تبحث عن `# nx-end` وتضيف قبله
-- عند الحذف: تبحث عن الحزمة بين التعليقين وتحذفها
-
-### كشف تعدد systemPackages
-
-إن وُجد `environment.systemPackages` أكثر من مرة في الملف، الأداة تسأل المستخدم أيهما يريد الإضافة إليها.
-
----
-
-## ملفات الاختبار
-
-```
-/etc/nixos-test/
-├── configuration.nix
-├── flake.nix
-├── nix-install-packages.nix
-└── nix-install-flakes.nix
-```
-
-البرنامج يعدّل هذه بدل ملفات النظام الحقيقية أثناء التطوير.
+- **بيانات اعتماد NixOS Search** — استبدال Base64 في `stable.py` و`unstable.py` بمتغير بيئة
+- **التحقق من أسماء الحزم** — إضافة `validate_package_name()` قبل أي كتابة في الملفات
+- **فحص الصلاحيات** — التحقق من وجود `sudo` قبل الكتابة في `/etc/nixos/` مع رسالة واضحة
