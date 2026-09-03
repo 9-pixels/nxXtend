@@ -262,3 +262,186 @@ def is_package_exists(content: str, pkg_name: str, config_dir: Path) -> bool:
             return True
     
     return False
+
+
+def is_input_exists(content: str, flake_name: str) -> bool:
+    return bool(re.search(rf'{re.escape(flake_name)}\s*=\s*{{', content) or
+                re.search(rf'{re.escape(flake_name)}\.url\s*=', content))
+
+def add_flake_input(content: str, flake_name: str, flake_url: str, follows: bool = True) -> str:
+    match = re.search(r'inputs\s*=\s*\{', content)
+    if not match:
+        return content
+
+    pos = match.end()
+    depth = 1
+    while pos < len(content) and depth > 0:
+        if content[pos] == '{':
+            depth += 1
+        elif content[pos] == '}':
+            depth -= 1
+        pos += 1
+
+    closing_pos = pos - 1
+
+    if follows:
+        new_input = f'\n    {flake_name} = {{\n      url = "{flake_url}";\n      inputs.nixpkgs.follows = "nixpkgs";\n    }};'
+    else:
+        new_input = f'\n    {flake_name}.url = "{flake_url}";'
+
+    return content[:closing_pos] + new_input + "\n  " + content[closing_pos:]
+
+def add_flake_to_outputs(content: str, flake_name: str) -> str:
+    match = re.search(r'outputs\s*=\s*\{([^}]*)\}', content)
+    if not match:
+        return content
+
+    inner = match.group(1)
+
+    if flake_name in inner:
+        return content  # موجود مسبقاً
+
+    # نضيف قبل ...
+    if '...' in inner:
+        new_inner = inner.replace('...', f'{flake_name}, ...')
+    else:
+        new_inner = inner.rstrip() + f', {flake_name}'
+
+    return content[:match.start(1)] + new_inner + content[match.end(1):]
+
+def add_flake_package(content: str, flake_name: str, pkg_attr: str, system_var: str = "pkgs.stdenv.hostPlatform.system") -> str:
+    pkg_line = f"inputs.{flake_name}.packages.${{{system_var}}}.{pkg_attr}"
+    
+    # نبحث عن home.packages أولاً
+    match = re.search(r'home\.packages\s*=\s*\[', content)
+    if match:
+        pos = match.end()
+        depth = 1
+        while pos < len(content) and depth > 0:
+            if content[pos] == '[':
+                depth += 1
+            elif content[pos] == ']':
+                depth -= 1
+            pos += 1
+        closing_pos = pos - 1
+        lines = content[match.end():closing_pos].split('\n')
+        indent = "    "
+        for line in lines:
+            stripped = line.strip()
+            if stripped and not stripped.startswith('#'):
+                indent = line[:len(line) - len(line.lstrip())]
+                break
+        return content[:closing_pos] + f"{indent}{pkg_line}\n" + content[closing_pos:]
+
+    # إن لم توجد home.packages نبحث عن systemPackages
+    return add_package(content, pkg_line, Path("."))
+
+def add_flake_module(content: str, flake_name: str, module_name: str) -> str:
+    module_line = f"{flake_name}.nixosModules.{module_name}"
+    
+    # نبحث عن modules = [
+    match = re.search(r'modules\s*=\s*\[', content)
+    if not match:
+        return content
+    
+    pos = match.end()
+    depth = 1
+    while pos < len(content) and depth > 0:
+        if content[pos] == '[':
+            depth += 1
+        elif content[pos] == ']':
+            depth -= 1
+        pos += 1
+    
+    closing_pos = pos - 1
+    
+    # التحقق أنه غير موجود مسبقاً
+    inner = content[match.end():closing_pos]
+    if module_line in inner:
+        return content
+    
+    lines = inner.split('\n')
+    indent = "        "
+    for line in lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith('#'):
+            indent = line[:len(line) - len(line.lstrip())]
+            break
+    
+    return content[:closing_pos] + f"{indent}{module_line}\n" + content[closing_pos:]
+
+def add_flake_overlay(content: str, flake_name: str, overlay_name: str) -> str:
+    overlay_line = f"{flake_name}.overlays.{overlay_name}"
+    
+    # نبحث عن nixpkgs.overlays
+    match = re.search(r'nixpkgs\.overlays\s*=\s*\[', content)
+    if match:
+        pos = match.end()
+        depth = 1
+        while pos < len(content) and depth > 0:
+            if content[pos] == '[':
+                depth += 1
+            elif content[pos] == ']':
+                depth -= 1
+            pos += 1
+        
+        closing_pos = pos - 1
+        inner = content[match.end():closing_pos]
+        
+        if overlay_line in inner:
+            return content
+        
+        lines = inner.split('\n')
+        indent = "    "
+        for line in lines:
+            stripped = line.strip()
+            if stripped and not stripped.startswith('#'):
+                indent = line[:len(line) - len(line.lstrip())]
+                break
+        
+        return content[:closing_pos] + f"{indent}{overlay_line}\n" + content[closing_pos:]
+    
+    # إن لم توجد nixpkgs.overlays ننشئها في configuration.nix
+    last_brace = content.rfind('}')
+    new_block = f"\n  nixpkgs.overlays = [\n    {overlay_line}\n  ];\n"
+    return content[:last_brace] + new_block + content[last_brace:]
+
+def add_flake(
+    flake_content: str,
+    flake_name: str,
+    flake_url: str,
+    pkg_attr: str,
+    pkg_type: str,  # "package", "nixosModule", "overlay", "homeModule"
+    module_name: str = "default",
+    overlay_name: str = "default",
+    home_content: str = None,
+    follows: bool = True
+) -> tuple[str, str | None]:
+    # flake_content = محتوى flake.nix
+    # home_content = محتوى home.nix (إن وجد)
+
+    # 1 — إضافة الـ input إن لم يكن موجوداً
+    if not is_input_exists(flake_content, flake_name):
+        flake_content = add_flake_input(flake_content, flake_name, flake_url, follows)
+        flake_content = add_flake_to_outputs(flake_content, flake_name)
+
+    # 2 — إضافة حسب النوع
+    if pkg_type == "package":
+        if home_content is not None:
+            home_content = add_flake_package(home_content, flake_name, pkg_attr)
+        else:
+            flake_content = add_flake_package(flake_content, flake_name, pkg_attr)
+
+    elif pkg_type == "nixosModule":
+        flake_content = add_flake_module(flake_content, flake_name, module_name)
+
+    elif pkg_type == "overlay":
+        # الـ overlay يُضاف في configuration.nix وليس flake.nix
+        # نرجع None للـ home_content ونترك main.py يتعامل مع configuration.nix
+        pass
+
+    elif pkg_type == "homeModule":
+        if home_content is not None:
+            home_content = add_home_flake_module(home_content, flake_name, module_name)
+
+    return flake_content, home_content
