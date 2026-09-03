@@ -4,6 +4,7 @@ from src.core.config import save_config
 
 
 def draw_header(stdscr, page: int, total: int):
+    """Draw the top border bar with title and page number."""
     height, width = stdscr.getmaxyx()
     title = "nx setup"
     page_info = f"{page} / {total}"
@@ -16,16 +17,19 @@ def draw_header(stdscr, page: int, total: int):
     stdscr.addstr(2, 2, "└" + "─" * (width - 4) + "┘")
 
 def draw_footer(stdscr, hint: str):
+    """Draw the bottom border bar with a hint string."""
     height, width = stdscr.getmaxyx()
     stdscr.addstr(height - 2, 2, "─" * (width - 4))
     stdscr.addstr(height - 1, 2, hint)
 
 def first_setup() -> dict:
+    """Run the initial setup wizard and save user preferences."""
     result = curses.wrapper(_setup)
     save_config(result["mode"], result["use_flakes"], result["config_path"])
     return result
 
 def _setup(stdscr) -> dict:
+    """Internal setup flow — runs inside curses.wrapper."""
     init_colors()
     curses.curs_set(0)
     stdscr.keypad(True)
@@ -34,7 +38,7 @@ def _setup(stdscr) -> dict:
     use_flakes = page_flakes(stdscr)
 
     if use_flakes:
-        mode = page_flakes_type(stdscr) + 1  # 2, 3, أو 4
+        mode = page_flakes_type(stdscr) + 1  # 2, 3, or 4
     else:
         mode = 1
 
@@ -48,9 +52,11 @@ def _setup(stdscr) -> dict:
     }
 
 def first_setup() -> dict:
+    """Entry point for first-time setup — runs the curses TUI."""
     return curses.wrapper(_setup)
 
 def init_colors():
+    """Initialize the green color pair used for highlighting."""
     global GREEN
     curses.start_color()
     curses.use_default_colors()
@@ -58,12 +64,15 @@ def init_colors():
     GREEN = curses.color_pair(1) | curses.A_DIM
 
 def draw_highlight(stdscr, row: int, col: int, text: str):
+    """Draw text in the highlight (green) color."""
     stdscr.addstr(row, col, text, GREEN)
 
 def draw_text(stdscr, row: int, col: int, text: str):
+    """Draw text in the default color."""
     stdscr.addstr(row, col, text)
 
 def page_welcome(stdscr):
+    """Display the welcome page — explains what nx does."""
     stdscr.erase()
     height, width = stdscr.getmaxyx()
     
@@ -93,6 +102,7 @@ def page_welcome(stdscr):
         if key in (10, 13):
             break
 def page_flakes(stdscr) -> bool:
+    """Ask the user whether they use flakes."""
     stdscr.erase()
     height, width = stdscr.getmaxyx()
     
@@ -111,6 +121,7 @@ def page_flakes(stdscr) -> bool:
     return input_yes_no(stdscr)
 
 def input_yes_no(stdscr) -> bool:
+    """Read y/n input from the user — Enter defaults to yes."""
     while True:
         key = stdscr.getch()
         if key == ord('y') or key == 10 or key == 13:
@@ -119,6 +130,7 @@ def input_yes_no(stdscr) -> bool:
             return False
 
 def page_flakes_type(stdscr) -> int:
+    """Ask how the user manages their flakes — returns choice 1, 2, or 3."""
     stdscr.erase()
     height, width = stdscr.getmaxyx()
     
@@ -144,6 +156,7 @@ def page_flakes_type(stdscr) -> int:
     return input_choice(stdscr, ["1", "2", "3"])
 
 def page_config_path(stdscr) -> str:
+    """Ask where the NixOS config files are located — defaults to /etc/nixos."""
     stdscr.erase()
     height, width = stdscr.getmaxyx()
     
@@ -158,6 +171,7 @@ def page_config_path(stdscr) -> str:
     return input_text(stdscr, 8, 4, "/etc/nixos")
 
 def input_text(stdscr, row: int, col: int, default: str) -> str:
+    """Read text input from the user with a default fallback."""
     buf = ""
     prompt = f"  path [{default}]: "
     
@@ -177,6 +191,7 @@ def input_text(stdscr, row: int, col: int, default: str) -> str:
             buf += chr(key)
 
 def page_commands(stdscr, use_flakes: bool, mode: int):
+    """Display the final page showing available nx commands."""
     stdscr.erase()
     height, width = stdscr.getmaxyx()
     

@@ -11,6 +11,7 @@ from src.ui.display import (
     show_summary, show_rebuild_start, show_rebuild_done
 )
 
+# Get package version from importlib.metadata, fallback to "dev"
 try:
     from importlib.metadata import version
     VERSION = version("nx")
@@ -18,11 +19,14 @@ except Exception:
     VERSION = "dev"
 
 console = Console()
+# Hardcoded config path — should be read from ~/.config/nx/config.toml in production
 CONFIG = Path("/etc/nixos-test/configuration.nix")
 
 def handle_install(pkg_name: str):
+    """Search for a package across all sources and install selected packages."""
     results = {}
-    
+
+    # Search sequentially in stable, then unstable
     for source, packages in search(pkg_name):
         show_searching(source)
         results[source] = packages
@@ -32,6 +36,7 @@ def handle_install(pkg_name: str):
         show_no_results(pkg_name)
         return
 
+    # Let user choose which source to install from
     source = show_source_select(len(results["stable"]), len(results["unstable"]))
 
     if source == 0:
@@ -39,6 +44,7 @@ def handle_install(pkg_name: str):
 
     packages = results["stable"] if source == 1 else results["unstable"]
 
+    # Show interactive results browser
     selected = show_results(packages)
 
     if not selected:
@@ -49,6 +55,7 @@ def handle_install(pkg_name: str):
     if not confirmed:
         return
 
+    # Read config, backup, add packages, and write back
     content = read_config(CONFIG)
     backup_config(CONFIG)
 
@@ -56,18 +63,19 @@ def handle_install(pkg_name: str):
         content = add_package(content, pkg.attribute, CONFIG.parent)
 
     CONFIG.write_text(content)
-    
+
 
 def handle_remove(pkg_name: str):
+    """Remove a package from configuration.nix and rebuild."""
     content = read_config(CONFIG)
-    
+
     if not is_package_exists(content, pkg_name, CONFIG.parent):
         console.print(f"\n  package '{pkg_name}' not found in configuration\n")
         return
 
     backup_config(CONFIG)
     new_content, found = remove_package(content, pkg_name, CONFIG.parent)
-    
+
     if not found:
         console.print(f"\n  could not remove '{pkg_name}'\n")
         return
