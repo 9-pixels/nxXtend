@@ -3,6 +3,7 @@ from src.api.unstable import unstable_search
 from src.api.flakes import flake_search
 
 def deduplicate(packages):
+    # Deduplicate by package name to avoid showing the same package twice
     seen = set()
     result = []
     for pkg in packages:

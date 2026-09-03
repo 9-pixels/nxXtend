@@ -5,15 +5,19 @@ from src.models.package import Package
 PAGE_SIZE = 17
 
 def show_searching(source: str):
+    """Show a 'searching...' message with carriage return for in-place update."""
     print(f"  searching in {source}...", end="\r", flush=True)
 
 def show_done(source: str):
+    """Show a 'done' checkmark after a search completes."""
     print(f"  searching in {source}...     ✓")
 
 def show_no_results(query: str):
+    """Display a 'no results' message."""
     print(f"\n  no results found for \"{query}\"\n")
 
 def show_source_select(stable_count: int, unstable_count: int) -> int:
+    """Display source selection menu and return user choice (0, 1, or 2)."""
     print()
     print(f"  [1] Stable    ({stable_count})")
     print(f"  [2] Unstable  ({unstable_count})")
@@ -27,9 +31,11 @@ def show_source_select(stable_count: int, unstable_count: int) -> int:
         print("  invalid — 0, 1, or 2 only")
 
 def show_results(packages: list[Package]) -> list[Package]:
+    """Open the interactive curses browser and return selected packages."""
     return curses.wrapper(_show_results_curses, packages)
 
 def _show_results_curses(stdscr, packages: list[Package]) -> list[Package]:
+    """Interactive curses UI for browsing and selecting packages."""
     curses.use_default_colors()
     curses.curs_set(0)
     stdscr.keypad(True)
@@ -39,6 +45,7 @@ def _show_results_curses(stdscr, packages: list[Package]) -> list[Package]:
     total_pages = (len(packages) + PAGE_SIZE - 1) // PAGE_SIZE
     input_buf = ""
 
+    # Column widths for the table layout
     COL_NUM = 5
     COL_NAME = 32
     COL_VERSION = 16
@@ -48,11 +55,11 @@ def _show_results_curses(stdscr, packages: list[Package]) -> list[Package]:
         stdscr.erase()
         height, width = stdscr.getmaxyx()
 
-        # العناوين
+        # Headers
         stdscr.addstr(0, 2, f"{'#':<{COL_NUM}}{'Name':<{COL_NAME}}{'Version':<{COL_VERSION}}")
         stdscr.addstr(1, 2, "─" * TABLE_WIDTH)
 
-        # الحزم
+        # Packages
         start = page * PAGE_SIZE
         end = min(start + PAGE_SIZE, len(packages))
 
@@ -66,16 +73,16 @@ def _show_results_curses(stdscr, packages: list[Package]) -> list[Package]:
             if num == 1:
                 stdscr.addstr(row, 2 + len(line), "<-- default")
 
-        # التنقل
+        # Navigation
         nav_row = end - start + 3
         stdscr.addstr(nav_row, 2, f"── page {page+1}/{total_pages} ── (n) next  (p) prev")
 
-        # المحدد
+        # Selection indicator
         selected_row = nav_row + 1
         selected_names = ", ".join(p.name for p in selected) if selected else "none"
         stdscr.addstr(selected_row, 2, f"selected: {selected_names}")
 
-        # الإدخال
+        # Input line
         input_row = selected_row + 2
         stdscr.addstr(input_row, 2, f"select (y / q / 1,2,3): {input_buf}")
 
@@ -120,6 +127,7 @@ def _show_results_curses(stdscr, packages: list[Package]) -> list[Package]:
     return selected
 
 def show_summary(packages: list[Package]) -> bool:
+    """Display a summary of selected packages and ask for confirmation."""
     print()
     print("  summary:")
     print()
@@ -135,9 +143,11 @@ def show_summary(packages: list[Package]) -> bool:
             return False
             
 def show_rebuild_start():
+    """Display 'running nixos-rebuild' message."""
     print("\n  running nixos-rebuild switch...\n")
 
 def show_rebuild_done(success: bool):
+    """Display rebuild result — success or failure."""
     if success:
         print("\n  ✓ done.\n")
     else:
