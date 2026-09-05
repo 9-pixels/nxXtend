@@ -1,10 +1,21 @@
 sudo nx install [pkg]          — تثبيت حزمة
 sudo nx remove [pkg]           — حذف حزمة
 sudo nx upgrade                — nixos-rebuild switch (تحديث النظام)
-sudo nx upgrade --flakes       — تحديث الـ flakes inputs + rebuild
+sudo nx flakes upgrade         — تحديث الـ flakes inputs + rebuild
 sudo nx flakes [pkg]           — البحث في الـ flakes وتثبيت
 sudo nx flakes remove [pkg]    — حذف flake كاملاً من القائمة
-nx --help                      — المساعدة
-nx --upgrade                   — تحديث الأداة نفسها
-nx --uninstall                 — إزالة الأداة
+nx --help or -h                — المساعدة
+nx --uninstall or -u           — إزالة الأداة
 man nx                         — الدليل الكامل
+nx --version or -v             — لمعرفة الاصدار
+
+
+
+
+                                        --------- ليست الان ----------
+
+
+
+nx fullinfo                    — تعرض كل حزم النظام سواء فلايك ام من nixpkgs
+nx --upgrade                   — تحديث الأداة نفسها
+nx shortcuts                   — اضافة اختصارات لمسارات حزم

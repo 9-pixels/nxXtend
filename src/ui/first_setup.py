@@ -51,10 +51,6 @@ def _setup(stdscr) -> dict:
         "config_path": config_path
     }
 
-def first_setup() -> dict:
-    """Entry point for first-time setup — runs the curses TUI."""
-    return curses.wrapper(_setup)
-
 def init_colors():
     """Initialize the green color pair used for highlighting."""
     global GREEN
@@ -128,6 +124,13 @@ def input_yes_no(stdscr) -> bool:
             return True
         elif key == ord('n'):
             return False
+
+def input_choice(stdscr, options: list[str]) -> int:
+    while True:
+        key = stdscr.getch()
+        ch = chr(key) if 32 <= key <= 126 else ""
+        if ch in options:
+            return int(ch)
 
 def page_flakes_type(stdscr) -> int:
     """Ask how the user manages their flakes — returns choice 1, 2, or 3."""

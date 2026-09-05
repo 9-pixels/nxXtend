@@ -286,8 +286,7 @@ def is_input_exists(content: str, flake_name: str) -> bool:
     return bool(re.search(rf'{re.escape(flake_name)}\s*=\s*{{', content) or
                 re.search(rf'{re.escape(flake_name)}\.url\s*=', content))
 
-def add_flake_input(content: str, flake_name: str, flake_url: str, follows: bool = True) -> str:
-    """Add a flake input to flake.nix inputs block."""
+def add_flake_input(content: str, flake_name: str, flake_url: str, follows: bool = True, dep_of: str = None) -> str:
     match = re.search(r'inputs\s*=\s*\{', content)
     if not match:
         return content
@@ -303,10 +302,12 @@ def add_flake_input(content: str, flake_name: str, flake_url: str, follows: bool
 
     closing_pos = pos - 1
 
-    if follows:
-        new_input = f'\n    {flake_name} = {{\n      url = "{flake_url}";\n      inputs.nixpkgs.follows = "nixpkgs";\n    }};'
+    if dep_of:
+        new_input = f'\n    {flake_name}.url = "{flake_url}"; # nx-dep: {dep_of}'
+    elif follows:
+        new_input = f'\n    {flake_name} = {{\n      url = "{flake_url}";\n      inputs.nixpkgs.follows = "nixpkgs";\n    }}; # nx'
     else:
-        new_input = f'\n    {flake_name}.url = "{flake_url}";'
+        new_input = f'\n    {flake_name}.url = "{flake_url}"; # nx'
 
     return content[:closing_pos] + new_input + "\n  " + content[closing_pos:]
 
@@ -474,3 +475,27 @@ def add_flake(
             home_content = add_home_flake_module(home_content, flake_name, module_name)
 
     return flake_content, home_content
+
+def remove_flake(content: str, flake_name: str) -> tuple[str, bool]:
+    # Remove dependencies first (lines with # nx-dep: flake_name)
+    lines = content.split('\n')
+    new_lines = [l for l in lines if f'# nx-dep: {flake_name}' not in l]
+    content = '\n'.join(new_lines)
+
+    # Find and remove the main input block
+    match = re.search(
+        rf'\n\s*{re.escape(flake_name)}\s*=\s*\{{[^}}]*\}};\s*#\s*nx\b',
+        content, re.DOTALL
+    )
+    if match:
+        return content[:match.start()] + content[match.end()], True
+
+    # Try short form: flake_name.url = "..."; # nx
+    match = re.search(
+        rf'\n\s*{re.escape(flake_name)}\.url\s*=\s*"[^"]*";\s*#\s*nx\b',
+        content
+    )
+    if match:
+        return content[:match.start()] + content[match.end():], True
+
+    return content, False

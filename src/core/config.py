@@ -1,8 +1,10 @@
+import os
 import toml
 from pathlib import Path
 
 # User config directory and file location
-CONFIG_DIR = Path.home() / ".config" / "nx"
+_user = os.environ.get("SUDO_USER") or os.environ.get("USER")
+CONFIG_DIR = Path(f"/home/{_user}") / ".config" / "nx"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 
 def save_config(mode: int, use_flakes: bool, config_path: str):

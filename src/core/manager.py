@@ -1,9 +1,8 @@
 from src.api.stable import stable_search
 from src.api.unstable import unstable_search
-from src.api.flakes import flake_search
+from src.api.flakes import flake_search as _flake_search, flake_get_info as _flake_get_info
 
 def deduplicate(packages):
-    # Deduplicate by package name to avoid showing the same package twice
     seen = set()
     result = []
     for pkg in packages:
@@ -18,5 +17,8 @@ def search(pkg_name: str):
     unstable = deduplicate(unstable_search(pkg_name))
     yield "unstable", unstable
 
-def search_flake(flake_url: str):
-    return flake_search(flake_url)
+def flake_search(flake_url: str):
+    return _flake_search(flake_url)
+
+def flake_get_info(flake_url: str, pkg_attr: str) -> dict:
+    return _flake_get_info(flake_url, pkg_attr)
