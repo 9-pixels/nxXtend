@@ -152,3 +152,94 @@ def show_rebuild_done(success: bool):
         print("\n  ✓ done.\n")
     else:
         print("\n  ✗ nixos-rebuild failed — changes reverted.\n")
+
+def show_results_flake(packages: list[Package]) -> list[Package]:
+    """Open the interactive curses browser for flakes with an 'all' option."""
+    return curses.wrapper(_show_results_flake_curses, packages)
+
+def _show_results_flake_curses(stdscr, packages: list[Package]) -> list[Package]:
+    curses.use_default_colors()
+    curses.curs_set(0)
+    stdscr.keypad(True)
+
+    page = 0
+    selected = []
+    total_pages = (len(packages) + PAGE_SIZE - 1) // PAGE_SIZE
+    input_buf = ""
+
+    COL_NUM = 5
+    COL_NAME = 32
+    COL_VERSION = 16
+    TABLE_WIDTH = COL_NUM + COL_NAME + COL_VERSION
+
+    while True:
+        stdscr.erase()
+        height, width = stdscr.getmaxyx()
+
+        stdscr.addstr(0, 2, f"{'#':<{COL_NUM}}{'Name':<{COL_NAME}}")
+        stdscr.addstr(1, 2, "─" * TABLE_WIDTH)
+
+        start = page * PAGE_SIZE
+        end = min(start + PAGE_SIZE, len(packages))
+
+        for i, pkg in enumerate(packages[start:end]):
+            num = start + i + 1
+            row = i + 2
+            if row >= height - 4:
+                break
+            name = (pkg.name[:28] + "..") if len(pkg.name) > 30 else pkg.name
+            line = f"{num:<{COL_NUM}}{name:<{COL_NAME}}"
+            if 2 + len(line) < width:
+                stdscr.addstr(row, 2, line)
+
+        nav_row = end - start + 3
+        stdscr.addstr(nav_row, 2, f"── page {page+1}/{total_pages} ── (n) next  (p) prev")
+
+        selected_row = nav_row + 1
+        selected_names = ", ".join(p.name for p in selected) if selected else "none"
+        stdscr.addstr(selected_row, 2, f"selected: {selected_names}")
+
+        input_row = selected_row + 2
+        stdscr.addstr(input_row, 2, f"select (all / q / 1,2,3): {input_buf}")
+
+        curses.curs_set(1)
+        stdscr.move(input_row, 2 + len(f"select (all / q / 1,2,3): {input_buf}"))
+        stdscr.refresh()
+
+        key = stdscr.getch()
+
+        if key == ord('n'):
+            if page < total_pages - 1:
+                page += 1
+            input_buf = ""
+        elif key == ord('p'):
+            if page > 0:
+                page -= 1
+            input_buf = ""
+        elif key == 10 or key == 13:
+            if input_buf == "all":
+                return packages
+            elif input_buf:
+                try:
+                    nums = [int(x.strip()) for x in input_buf.split(',')]
+                    for num in nums:
+                        if 1 <= num <= len(packages):
+                            pkg = packages[num - 1]
+                            if pkg not in selected:
+                                selected.append(pkg)
+                except ValueError:
+                    pass
+                input_buf = ""
+            else:
+                if not selected and packages:
+                    selected = [packages[0]]
+                break
+        elif key == ord('q'):
+            selected = []
+            break
+        elif key == curses.KEY_BACKSPACE or key == 127:
+            input_buf = input_buf[:-1]
+        elif 32 <= key <= 126:
+            input_buf += chr(key)
+
+    return selected
