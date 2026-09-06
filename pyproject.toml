@@ -10,6 +10,7 @@ dependencies = [
     "rich",
     "readchar",
     "toml"
+    "cureses"
 ]
 [project.scripts]
 nx = "main:main"
