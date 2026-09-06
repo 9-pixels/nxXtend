@@ -16,9 +16,10 @@ from src.ui.display import (
     show_source_select, show_results, show_results_flake,
     show_summary, show_rebuild_start, show_rebuild_done
 )
+from importlib.metadata import version
+
 
 try:
-    from importlib.metadata import version
     VERSION = version("nx")
 except Exception:
     VERSION = "dev"
