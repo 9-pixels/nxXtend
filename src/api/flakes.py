@@ -210,13 +210,27 @@ def flake_get_info(flake_url: str, pkg_attr: str) -> dict:
 def _find_block(content: str, pattern: str) -> str | None:
     """Find and extract a balanced brace block for a given output pattern."""
 
-    # Pattern 1: pattern.system = { ... }
-    match = re.search(rf'\b{pattern}\.[a-z0-9_-]+\s*=\s*\{{', content)
+    print(f"\n[DEBUG] _find_block(pattern={pattern!r})")
+    print(f"[DEBUG] content={content!r}")
+
+    # Pattern 1
+    p1 = rf'\b{pattern}\.[a-z0-9_-]+\s*=\s*\{{'
+    print(f"[DEBUG] Pattern 1: {p1!r}")
+
+    match = re.search(p1, content)
+    print(f"[DEBUG] Pattern 1 match: {match}")
+
     if match:
+        print(f"[DEBUG] Pattern 1 matched: {match.group(0)!r}")
         return extract_block(content, match.end() - 1)
 
-    # Pattern 2: pattern = { system = { ... }; }
-    match = re.search(rf'\b{pattern}\s*=\s*\{{\s*[a-z0-9_-]+\s*=\s*\{{', content)
+    # Pattern 2
+    p2 = rf'\b{pattern}\s*=\s*\{{\s*[a-z0-9_-]+\s*=\s*\{{'
+    print(f"[DEBUG] Pattern 2: {p2!r}")
+
+    match = re.search(p2, content)
+    print(f"[DEBUG] Pattern 2 match: {match}")
+
     if match:
         inner = re.search(r'\{', content[match.start():])
         if inner:
@@ -225,20 +239,37 @@ def _find_block(content: str, pattern: str) -> str | None:
                 pos = match.start() + inner.end() + second.start()
                 return extract_block(content, pos)
 
-    # Pattern 3: pattern = forAllSystems/eachSystem/eachDefaultSystem/lib.genAttrs (... { ... })
-    match = re.search(
-        rf'\b{pattern}\s*=\s*(?:lib\.)?(?:forAllSystems|eachSystem|eachDefaultSystem|genAttrs)\s*[^{{]*\{{',
-        content
-    )
+    # Pattern 3
+    p3 = rf'\b{pattern}\s*=\s*(?:lib\.)?(?:forAllSystems|eachSystem|eachDefaultSystem|genAttrs)\s*[^\{{]*\{{'
+    print(f"[DEBUG] Pattern 3: {p3!r}")
+
+    match = re.search(p3, content)
+    print(f"[DEBUG] Pattern 3 match: {match}")
+
     if match:
+        print(f"[DEBUG] Pattern 3 matched: {match.group(0)!r}")
         return extract_block(content, match.end() - 1)
 
-    # Pattern 4: perSystem = { ... }: { pattern = { ... }; }
-    match = re.search(r'\bperSystem\s*=', content)
+    # Pattern 4
+    p4 = r'\bperSystem\s*='
+    print(f"[DEBUG] Pattern 4: {p4!r}")
+
+    match = re.search(p4, content)
+    print(f"[DEBUG] Pattern 4 match: {match}")
+
     if match:
-        pkg_match = re.search(rf'\b{pattern}\s*=\s*\{{', content[match.start():])
+        pkg_match = re.search(
+            rf'\b{pattern}\s*=\s*\{{',
+            content[match.start():]
+        )
+
+        print(f"[DEBUG] Pattern 4 inner match: {pkg_match}")
+
         if pkg_match:
             pos = match.start() + pkg_match.end() - 1
             return extract_block(content, pos)
+
+    print("[DEBUG] No pattern matched.")
+    return None
 
     return None

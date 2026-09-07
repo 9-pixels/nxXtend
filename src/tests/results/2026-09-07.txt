@@ -1,0 +1,75 @@
+test_find_block — 2026-09-07
+
+  ✓ pattern1 — direct system attr
+  ✓ pattern2 — attrset
+  ✓ pattern3 — forAllSystems
+  ✓ pattern3 — genAttrs
+  ✓ pattern4 — perSystem
+  ✓ pattern not found
+  ✗ nixosModules
+  ✗ overlays
+  ✓ no partial match
+  ✓ nested braces
+
+  8 passed, 2 failed
+
+test_find_block — 2026-09-07
+
+  ✓ pattern1 — direct system attr
+  ✓ pattern2 — attrset
+  ✓ pattern3 — forAllSystems
+  ✓ pattern3 — genAttrs
+  ✓ pattern4 — perSystem
+  ✓ pattern not found
+  ✗ nixosModules
+  ✗ overlays
+  ✓ no partial match
+  ✓ nested braces
+
+  8 passed, 2 failed
+
+test_find_block — 2026-09-07
+
+  ✓ pattern1 — direct system attr
+  ✓ pattern2 — attrset
+  ✓ pattern3 — forAllSystems
+  ✓ pattern3 — genAttrs
+  ✓ pattern4 — perSystem
+  ✓ pattern not found
+  ✗ nixosModules
+  ✗ overlays
+  ✓ no partial match
+  ✓ nested braces
+
+  8 passed, 2 failed
+
+test_find_block — 2026-09-07
+
+  ✓ pattern1 — direct system attr
+  ✓ pattern2 — attrset
+  ✓ pattern3 — forAllSystems
+  ✓ pattern3 — genAttrs
+  ✓ pattern4 — perSystem
+  ✓ pattern not found
+  ✗ nixosModules
+  ✗ overlays
+  ✓ no partial match
+  ✓ nested braces
+
+  8 passed, 2 failed
+
+test_find_block — 2026-09-07
+
+  ✓ pattern1 — direct system attr
+  ✓ pattern2 — attrset
+  ✓ pattern3 — forAllSystems
+  ✓ pattern3 — genAttrs
+  ✓ pattern4 — perSystem
+  ✓ pattern not found
+  ✗ nixosModules
+  ✗ overlays
+  ✓ no partial match
+  ✓ nested braces
+
+  8 passed, 2 failed
+
