@@ -1,20 +1,64 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "nx"
-version = "0.1"
-description = "Interactive NixOS package manager"
+version = "0.1.0"
+description = "Interactive NixOS package and configuration manager"
 readme = "README.md"
-license = { text = "MIT" }
 requires-python = ">=3.11"
-dependencies = [
-    "requests",
-    "rich",
-    "readchar",
-    "toml"
-    "cureses"
+
+license = { text = "GPL-3.0-or-later" }
+
+authors = [
+    { name = "9-pixels" }
 ]
+
+keywords = [
+    "nixos",
+    "nix",
+    "package-manager",
+    "linux",
+    "flakes",
+    "configuration"
+]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: System :: Installation/Setup",
+    "Topic :: System :: Systems Administration"
+]
+
+dependencies = [
+    "python-dotenv>=1.0",
+    "readchar>=4.2",
+    "requests>=2.32",
+    "rich>=14.0",
+    "toml>=0.10"
+]
+
+[project.urls]
+Homepage = "https://github.com/9-pixels/nx"
+Repository = "https://github.com/9-pixels/nx"
+Issues = "https://github.com/9-pixels/nx/issues"
+
 [project.scripts]
 nx = "main:main"
 
-[build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.backends.legacy:build"
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]

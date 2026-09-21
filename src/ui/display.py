@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 9-pixels
+
 import curses
 import sys
 from src.models.package import Package
@@ -126,13 +129,16 @@ def _show_results_curses(stdscr, packages: list[Package]) -> list[Package]:
 
     return selected
 
-def show_summary(packages: list[Package]) -> bool:
-    """Display a summary of selected packages and ask for confirmation."""
+def show_summary(packages: list) -> bool:
+    """Display a summary of selected packages/outputs and ask for confirmation."""
     print()
     print("  summary:")
     print()
     for pkg in packages:
-        print(f"    + {pkg.name}  {pkg.version or '—'}  {pkg.source}")
+        name = pkg.name
+        version = getattr(pkg, 'version', None) or '—'
+        source = getattr(pkg, 'source', None) or getattr(pkg, 'type', 'flake')
+        print(f"    + {name}  {version}  {source}")
     print()
 
     while True:
@@ -152,6 +158,19 @@ def show_rebuild_done(success: bool):
         print("\n  ✓ done.\n")
     else:
         print("\n  ✗ nixos-rebuild failed — changes reverted.\n")
+
+
+def show_unsupported_format(status: str):
+    """Display message for unsupported systemPackages format."""
+    reason = {
+        "unsupported_empty": "empty systemPackages block",
+        "unsupported_missing": "missing systemPackages block",
+        "unsupported_external": "external systemPackages import",
+        "unsupported_with_pkgs": "with_pkgs detection failed",
+        "unsupported_explicit_pkgs": "explicit_pkgs detection failed",
+        "unsupported_unknown": "unknown format",
+    }.get(status, status)
+    print(f"\n  ✗ unsupported format: {reason}\n")
 
 def show_results_flake(packages: list[Package]) -> list[Package]:
     """Open the interactive curses browser for flakes with an 'all' option."""
