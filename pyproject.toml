@@ -42,8 +42,6 @@ classifiers = [
 ]
 
 dependencies = [
-    "python-dotenv>=1.0",
-    "readchar>=4.2",
     "requests>=2.32",
     "rich>=14.0",
     "toml>=0.10"
