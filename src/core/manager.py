@@ -1,6 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 9-pixels
+
 from src.api.stable import stable_search
 from src.api.unstable import unstable_search
-from src.api.flakes import flake_search as _flake_search, flake_get_info as _flake_get_info
 
 def deduplicate(packages):
     seen = set()
@@ -17,8 +19,3 @@ def search(pkg_name: str):
     unstable = deduplicate(unstable_search(pkg_name))
     yield "unstable", unstable
 
-def flake_search(flake_url: str):
-    return _flake_search(flake_url)
-
-def flake_get_info(flake_url: str, pkg_attr: str) -> dict:
-    return _flake_get_info(flake_url, pkg_attr)

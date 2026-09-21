@@ -26,6 +26,9 @@ Thumbs.db
 .coverage
 htmlcov/
 
+# Environment variables (local secrets only — API config is now hardcoded)
+.env
+
 # Distribution
 dist/
 build/
@@ -33,3 +36,13 @@ build/
 
 # Cache
 .cache/
+
+# somme files
+README-PRE.md
+roadmap.md
+mainf.txt
+functions.md
+full-flakes.md
+TODO.md
+config.toml.example
+setup.py
