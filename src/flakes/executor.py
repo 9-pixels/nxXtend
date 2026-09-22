@@ -4,13 +4,14 @@
 import subprocess
 from pathlib import Path
 from src.flakes.models import InstallationPlan
+from src.core.target import Target, SYSTEM_BLOCK, HOME_BLOCK
 from src.core.writer import (
     read_config, backup_files, restore_files,
     add_flake, add_flake_overlay, add_package, build_package_reference, detect_format
 )
 
 
-def execute(plan: InstallationPlan, config: dict) -> bool:
+def execute(plan: InstallationPlan, config: dict, target: Target | None = None) -> bool:
     """Execute an installation plan against the system configuration.
     
     This is the top-level entry point for the execution phase. Its job is to
@@ -23,8 +24,12 @@ def execute(plan: InstallationPlan, config: dict) -> bool:
     3. Attempt the rebuild
     4. If rebuild fails, restore ALL backed-up files
     
-    This means a failure at any point after backup leaves the system in its
+    This means that a failure at any point after backup leaves the system in its
     pre-transaction state. A successful rebuild means the new state persists.
+    
+    `target` (from -H/--home/-home via the CLI) selects WHERE the package
+    reference is written. It overrides the legacy home_manager_enabled
+    inference. None preserves the legacy behavior exactly.
     """
     if plan.action in {"unsupported", "configure_home"}:
         return False
@@ -33,10 +38,21 @@ def execute(plan: InstallationPlan, config: dict) -> bool:
     home_manager_enabled = config["setup"].get("home_manager_enabled", False)
     unstable_var = config["setup"].get("unstable_variable", "unstable")
 
-    if home_manager_enabled:
+    # Target file selection:
+    #   explicit target (from CLI)  → its file, always
+    #   no target (legacy/default)  → home_manager_enabled inference, unchanged
+    if target is Target.HOME:
         target_file = Path(config["setup"]["home_manager_path"])
-    else:
+        target_block = HOME_BLOCK
+    elif target is Target.SYSTEM:
         target_file = Path(config["setup"]["configuration_path"])
+        target_block = SYSTEM_BLOCK
+    else:
+        if home_manager_enabled:
+            target_file = Path(config["setup"]["home_manager_path"])
+        else:
+            target_file = Path(config["setup"]["configuration_path"])
+        target_block = None  # legacy auto-detect inside the writer
 
     if flake_enabled:
         flake_file = Path(config["setup"]["flake_path"])
@@ -68,7 +84,10 @@ def execute(plan: InstallationPlan, config: dict) -> bool:
         target_content = read_config(target_file)
 
     if plan.action == "install":
-        if flake_enabled or home_manager_enabled:
+        # Flake workflow is decided by flake_enabled alone.
+        # home_manager_enabled only describes target availability — it must
+        # never turn a package operation into a Flake operation.
+        if flake_enabled:
             # Flake-based install: add input + reference
             flake_content, target_content = add_flake(
                 flake_content=flake_content or "",
@@ -76,7 +95,8 @@ def execute(plan: InstallationPlan, config: dict) -> bool:
                 flake_url=plan.source.url,
                 pkg_attr=plan.output.name,
                 pkg_type="package",
-                home_content=target_content
+                home_content=target_content,
+                block=target_block,
             )
         else:
             # Non-flake install: add package directly to configuration.nix

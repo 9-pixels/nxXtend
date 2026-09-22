@@ -6,7 +6,10 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
 from src.flakes.models import FlakeOutput
-from main import _filter_supported_outputs, handle_flakes_upgrade, handle_install, handle_remove
+from main import (
+    _filter_supported_outputs, handle_flakes_upgrade, handle_install, handle_remove,
+    handle_flakes_install, handle_flakes_remove, _check_flakes_enabled, _check_home_manager_enabled,
+)
 
 
 def test_filter_packages():
@@ -74,6 +77,7 @@ def test_flakes_upgrade_uses_flake_path_from_config():
 
         config = {
             "setup": {
+                "flake_enabled": True,
                 "flake_path": str(flake_path),
             }
         }
@@ -95,6 +99,7 @@ def test_flakes_upgrade_runs_flake_update_then_rebuild():
 
         config = {
             "setup": {
+                "flake_enabled": True,
                 "flake_path": str(flake_path),
             }
         }
@@ -124,6 +129,7 @@ def test_flakes_upgrade_stops_on_flake_update_failure():
 
         config = {
             "setup": {
+                "flake_enabled": True,
                 "flake_path": str(flake_path),
             }
         }
@@ -260,6 +266,96 @@ def test_remove_keeps_changes_on_success():
             assert "vim" not in config_nix.read_text()
 
 
+def test_flakes_install_rejected_when_flakes_disabled():
+    """nx flakes <url> must be rejected before any file access when flake_enabled=false"""
+    config = {"setup": {"flake_enabled": False}}
+
+    with patch("main.parse_flake_url") as mock_parse:
+        with patch("main.get_metadata") as mock_meta:
+            handle_flakes_install("github:user/repo", config)
+
+    mock_parse.assert_not_called()
+    mock_meta.assert_not_called()
+
+
+def test_flakes_install_rejection_message_mentions_config_path():
+    """The rejection message must reference the actual config path from config.py"""
+    from src.core.config import CONFIG_FILE
+    import io
+    from contextlib import redirect_stdout
+
+    config = {"setup": {"flake_enabled": False}}
+    buf = io.StringIO()
+
+    # rich Console writes to stdout; capture it
+    with patch("main.parse_flake_url"):
+        with redirect_stdout(buf):
+            handle_flakes_install("github:user/repo", config)
+
+    output = buf.getvalue()
+    assert "flake_enabled" in output
+    assert str(CONFIG_FILE) in output
+
+
+def test_flakes_remove_rejected_when_flakes_disabled():
+    """nx flakes remove must be rejected before any file access when flake_enabled=false"""
+    config = {"setup": {"flake_enabled": False, "flake_path": "/nonexistent/flake.nix"}}
+
+    with patch("main.read_config") as mock_read:
+        handle_flakes_remove("some-flake", config)
+
+    mock_read.assert_not_called()
+
+
+def test_flakes_upgrade_rejected_when_flakes_disabled():
+    """nx flakes upgrade must be rejected before running nix when flake_enabled=false"""
+    config = {"setup": {"flake_enabled": False, "flake_path": "/nonexistent/flake.nix"}}
+
+    with patch("main.subprocess.run") as mock_run:
+        handle_flakes_upgrade(config)
+
+    mock_run.assert_not_called()
+
+
+def test_flakes_install_works_when_enabled():
+    """When flake_enabled=true the workflow must proceed past the guard"""
+    config = {"setup": {"flake_enabled": True}}
+
+    with patch("main.parse_flake_url") as mock_parse:
+        with patch("main.get_metadata") as mock_meta:
+            with patch("main.get_current_system") as mock_sys:
+                with patch("main.discover", return_value=[]) as mock_disc:
+                    mock_sys.return_value = "x86_64-linux"
+                    handle_flakes_install("github:user/repo", config)
+
+    mock_parse.assert_called_once()
+    mock_disc.assert_called_once()
+
+
+def test_home_manager_guard_rejects_when_disabled():
+    """Operations depending on Home Manager must be rejected when home_manager_enabled=false"""
+    config = {"setup": {"home_manager_enabled": False}}
+    assert _check_home_manager_enabled(config) is False
+
+
+def test_home_manager_guard_passes_when_enabled():
+    """The same guard must pass when home_manager_enabled=true"""
+    config = {"setup": {"home_manager_enabled": True}}
+    assert _check_home_manager_enabled(config) is True
+
+
+def test_flakes_guard_passes_when_enabled():
+    """The flakes guard must pass when flake_enabled=true"""
+    config = {"setup": {"flake_enabled": True}}
+    assert _check_flakes_enabled(config) is True
+
+
+def test_flakes_guard_rejects_when_disabled():
+    """The flakes guard must reject when flake_enabled=false"""
+    config = {"setup": {"flake_enabled": False}}
+    assert _check_flakes_enabled(config) is False
+
+
 if __name__ == "__main__":
     tests = [
         test_filter_packages,
@@ -277,6 +373,15 @@ if __name__ == "__main__":
         test_install_keeps_changes_on_success,
         test_remove_rollback_on_rebuild_failure,
         test_remove_keeps_changes_on_success,
+        test_flakes_install_rejected_when_flakes_disabled,
+        test_flakes_install_rejection_message_mentions_config_path,
+        test_flakes_remove_rejected_when_flakes_disabled,
+        test_flakes_upgrade_rejected_when_flakes_disabled,
+        test_flakes_install_works_when_enabled,
+        test_home_manager_guard_rejects_when_disabled,
+        test_home_manager_guard_passes_when_enabled,
+        test_flakes_guard_passes_when_enabled,
+        test_flakes_guard_rejects_when_disabled,
     ]
     passed = failed = 0
     for t in tests:

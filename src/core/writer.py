@@ -18,17 +18,23 @@ class AddResult:
     status: str
 
 
-def detect_format(content: str) -> str:
-    """Detect the format variant of the systemPackages block in configuration.nix."""
-    if re.search(r'systemPackages\s*=\s*import', content):
+def detect_format(content: str, block: str = "environment.systemPackages") -> str:
+    """Detect the format variant of a package block.
+
+    `block` is the full attribute path of the package list, e.g.
+    "environment.systemPackages" or "home.packages". Default preserves
+    the historical systemPackages-only behavior.
+    """
+    b = re.escape(block)
+    if re.search(rf'{b}\s*=\s*import', content):
         return "external"
-    elif re.search(r'systemPackages\s*=.*with pkgs;', content, re.DOTALL):
+    elif re.search(rf'{b}\s*=.*with pkgs;', content, re.DOTALL):
         return "with_pkgs"
-    elif re.search(r'systemPackages\s*=\s*\[', content) and 'pkgs.' in content:
+    elif re.search(rf'{b}\s*=\s*\[', content) and 'pkgs.' in content:
         return "explicit_pkgs"
-    elif re.search(r'systemPackages\s*=\s*\[\s*\]', content):
+    elif re.search(rf'{b}\s*=\s*\[\s*\]', content):
         return "empty"
-    elif 'systemPackages' not in content:
+    elif block not in content:
         return "missing"
     else:
         return "with_pkgs"  # default
@@ -67,9 +73,9 @@ def restore_files(files: list[Path], backup_dir: Path | None = None):
             shutil.copy2(backup, file)
 
 
-def add_package_with_pkgs(content: str, pkg_name: str) -> str:
-    """Add a package to a file using `with pkgs; [..]` syntax."""
-    match = re.search(r'systemPackages\s*=\s*with pkgs;\s*\[', content)
+def add_package_with_pkgs(content: str, pkg_name: str, block: str = "environment.systemPackages") -> str:
+    """Add a package to a block using `with pkgs; [..]` syntax."""
+    match = re.search(rf'{re.escape(block)}\s*=\s*with pkgs;\s*\[', content)
     if not match:
         return content
     
@@ -95,9 +101,9 @@ def add_package_with_pkgs(content: str, pkg_name: str) -> str:
     return content[:closing_pos] + f"{indent}{pkg_name}\n" + content[closing_pos:]
 
 
-def add_package_explicit_pkgs(content: str, pkg_name: str) -> str:
-    """Add a package to a file using explicit syntax (caller provides full reference)."""
-    match = re.search(r'systemPackages\s*=\s*\[', content)
+def add_package_explicit_pkgs(content: str, pkg_name: str, block: str = "environment.systemPackages") -> str:
+    """Add a package to a block using explicit syntax (caller provides full reference)."""
+    match = re.search(rf'{re.escape(block)}\s*=\s*\[', content)
     if not match:
         return content
     
@@ -123,22 +129,22 @@ def add_package_explicit_pkgs(content: str, pkg_name: str) -> str:
     return content[:closing_pos] + f"{indent}pkgs.{pkg_name}\n" + content[closing_pos:]
 
 
-def add_package_empty(content: str, pkg_name: str) -> str:
-    """Fill in an empty `systemPackages = []` block with the package."""
-    match = re.search(r'systemPackages\s*=\s*\[\s*\]', content)
+def add_package_empty(content: str, pkg_name: str, block: str = "environment.systemPackages") -> str:
+    """Fill in an empty `block = []` list with the package."""
+    match = re.search(rf'{re.escape(block)}\s*=\s*\[\s*\]', content)
     if not match:
         return content
     
     return content[:match.start()] + \
-           f"environment.systemPackages = [\n    {pkg_name}\n  ]" + \
+           f"{block} = [\n    {pkg_name}\n  ]" + \
            content[match.end():]
 
 
-def add_package_missing(content: str, pkg_name: str) -> str:
-    """Create a new `environment.systemPackages` block when none exists."""
+def add_package_missing(content: str, pkg_name: str, block: str = "environment.systemPackages") -> str:
+    """Create a new package block when none exists."""
     last_brace = content.rfind('}')
     
-    new_block = f"\n\n  environment.systemPackages = with pkgs; [\n    {pkg_name}\n  ];\n"
+    new_block = f"\n\n  {block} = with pkgs; [\n    {pkg_name}\n  ];\n"
     
     if last_brace == -1:
         return content + new_block
@@ -146,9 +152,9 @@ def add_package_missing(content: str, pkg_name: str) -> str:
     return content[:last_brace] + new_block + content[last_brace:]
 
 
-def add_package_external(content: str, pkg_name: str, config_dir: Path) -> str:
-    """Handle the case where systemPackages is imported from an external file."""
-    match = re.search(r'systemPackages\s*=\s*import\s+(\.\/\S+)', content)
+def add_package_external(content: str, pkg_name: str, config_dir: Path, block: str = "environment.systemPackages") -> str:
+    """Handle the case where the package block is imported from an external file."""
+    match = re.search(rf'{re.escape(block)}\s*=\s*import\s+(\.\/\S+)', content)
     if not match:
         return content
     
@@ -180,38 +186,38 @@ def add_package_external(content: str, pkg_name: str, config_dir: Path) -> str:
     return content
 
 
-def add_package(content: str, pkg_name: str, config_dir: Path) -> AddResult:
-    """Add a package to the configuration file using the detected format."""
-    fmt = detect_format(content)
+def add_package(content: str, pkg_name: str, config_dir: Path, block: str = "environment.systemPackages") -> AddResult:
+    """Add a package to a package block using the detected format."""
+    fmt = detect_format(content, block)
     
     try:
         if fmt == "with_pkgs":
-            return AddResult(content=add_package_with_pkgs(content, pkg_name), status="success")
+            return AddResult(content=add_package_with_pkgs(content, pkg_name, block), status="success")
         elif fmt == "explicit_pkgs":
-            return AddResult(content=add_package_explicit_pkgs(content, pkg_name), status="success")
+            return AddResult(content=add_package_explicit_pkgs(content, pkg_name, block), status="success")
         elif fmt == "empty":
-            return AddResult(content=add_package_with_pkgs(content, pkg_name), status="success")
+            return AddResult(content=add_package_with_pkgs(content, pkg_name, block), status="success")
         elif fmt == "missing":
-            return AddResult(content=add_package_missing(content, pkg_name), status="success")
+            return AddResult(content=add_package_missing(content, pkg_name, block), status="success")
         elif fmt == "external":
-            return AddResult(content=add_package_external(content, pkg_name, config_dir), status="success")
+            return AddResult(content=add_package_external(content, pkg_name, config_dir, block), status="success")
         else:
             return AddResult(content=content, status="unsupported_unknown")
     except Exception:
         return AddResult(content=content, status="error")
 
 
-def remove_package(content: str, pkg_name: str, config_dir: Path) -> tuple[str, bool]:
-    """Remove a package from the configuration file. Returns (new_content, found)."""
-    fmt = detect_format(content)
+def remove_package(content: str, pkg_name: str, config_dir: Path, block: str = "environment.systemPackages") -> tuple[str, bool]:
+    """Remove a package from a package block. Returns (new_content, found)."""
+    fmt = detect_format(content, block)
     
     if fmt == "external":
-        match = re.search(r'systemPackages\s*=\s*import\s+(\.\/\S+)', content)
+        match = re.search(rf'{re.escape(block)}\s*=\s*import\s+(\.\/\S+)', content)
         if not match:
             return content, False
         external_path = config_dir / match.group(1).lstrip('./')
         ext_content = external_path.read_text()
-        new_ext, found = remove_package(ext_content, pkg_name, external_path.parent)
+        new_ext, found = remove_package(ext_content, pkg_name, external_path.parent, block)
         if found:
             external_path.write_text(new_ext)
         return content, found
@@ -220,9 +226,9 @@ def remove_package(content: str, pkg_name: str, config_dir: Path) -> tuple[str, 
         return content, False
     
     if fmt == "with_pkgs":
-        match = re.search(r'systemPackages\s*=\s*with pkgs;\s*\[', content)
+        match = re.search(rf'{re.escape(block)}\s*=\s*with pkgs;\s*\[', content)
     else:
-        match = re.search(r'systemPackages\s*=\s*\[', content)
+        match = re.search(rf'{re.escape(block)}\s*=\s*\[', content)
     
     if not match:
         return content, False
@@ -258,24 +264,24 @@ def is_valid_name(pkg_name: str) -> bool:
     return bool(re.match(r'^[a-zA-Z0-9_-]+$', pkg_name))
 
 
-def is_package_exists(content: str, pkg_name: str, config_dir: Path) -> bool:
-    """Check if a package already exists in the configuration."""
-    fmt = detect_format(content)
+def is_package_exists(content: str, pkg_name: str, config_dir: Path, block: str = "environment.systemPackages") -> bool:
+    """Check if a package already exists in a package block."""
+    fmt = detect_format(content, block)
     
     if fmt == "missing" or fmt == "empty":
         return False
     
     if fmt == "external":
-        match = re.search(r'systemPackages\s*=\s*import\s+(\.\/\S+)', content)
+        match = re.search(rf'{re.escape(block)}\s*=\s*import\s+(\.\/\S+)', content)
         if not match:
             return False
         external_path = config_dir / match.group(1).lstrip('./')
-        return is_package_exists(external_path.read_text(), pkg_name, external_path.parent)
+        return is_package_exists(external_path.read_text(), pkg_name, external_path.parent, block)
     
     if fmt == "with_pkgs":
-        match = re.search(r'systemPackages\s*=\s*with pkgs;\s*\[', content)
+        match = re.search(rf'{re.escape(block)}\s*=\s*with pkgs;\s*\[', content)
     else:
-        match = re.search(r'systemPackages\s*=\s*\[', content)
+        match = re.search(rf'{re.escape(block)}\s*=\s*\[', content)
     
     if not match:
         return False
@@ -348,11 +354,25 @@ def add_flake_to_outputs(content: str, flake_name: str) -> str:
     return content[:match.start(1)] + new_inner + content[match.end(1):]
 
 
-def add_flake_package(content: str, flake_name: str, pkg_attr: str, system_var: str = "pkgs.stdenv.hostPlatform.system") -> str:
-    """Add a flake package reference to the configuration (home.packages or systemPackages)."""
+def add_flake_package(content: str, flake_name: str, pkg_attr: str, system_var: str = "pkgs.stdenv.hostPlatform.system", block: str | None = None) -> str:
+    """Add a flake package reference to a package block.
+
+    block=None → auto-detect (home.packages first, then systemPackages).
+    block="home.packages" / "environment.systemPackages" → target that
+    block explicitly; if it is missing, create it instead of falling
+    back to another file's block.
+    """
     pkg_line = f"inputs.{flake_name}.packages.${{{system_var}}}.{pkg_attr}"
-    
-    match = re.search(r'home\.packages\s*=\s*\[', content)
+
+    if block is not None:
+        # Explicit target block: use the target-aware add_package, which
+        # handles all formats (with pkgs / explicit / empty / missing) and
+        # creates the block when absent — never falls back elsewhere.
+        result = add_package(content, pkg_line, Path("."), block)
+        return result.content
+
+    # Auto-detect (legacy): home.packages first — both `= with pkgs; [` and plain `= [` forms.
+    match = re.search(r'home\.packages\s*=\s*(?:with pkgs;\s*)?\[', content)
     if match:
         pos = match.end()
         depth = 1
@@ -411,8 +431,13 @@ def add_flake_module(content: str, flake_name: str, module_name: str) -> str:
 
 
 def add_flake_overlay(content: str, flake_name: str, overlay_name: str) -> str:
-    """Add an overlay reference to nixpkgs.overlays, creating it if needed."""
-    overlay_line = f"{flake_name}.overlays.{overlay_name}"
+    """Add an overlay reference to nixpkgs.overlays, creating it if needed.
+
+    The reference uses the `inputs.` namespace: the overlay line is written
+    into configuration.nix/home.nix, where only `inputs.<name>` is in scope
+    (via specialArgs), never the bare flake name.
+    """
+    overlay_line = f"inputs.{flake_name}.overlays.{overlay_name}"
     
     match = re.search(r'nixpkgs\.overlays\s*=\s*\[', content)
     if match:
@@ -455,18 +480,25 @@ def add_flake(
     module_name: str = "default",
     overlay_name: str = "default",
     home_content: str = None,
-    follows: bool = True
+    follows: bool = True,
+    block: str | None = None,
 ) -> tuple[str, str | None]:
-    """High-level function to add a flake input and reference."""
+    """High-level function to add a flake input and reference.
+
+    The input declaration always goes to flake_content (flake.nix); the
+    package reference goes to home_content (the selected target file)
+    when provided, else into flake_content. `block` names the package
+    block inside the target file; None keeps legacy auto-detection.
+    """
     if not is_input_exists(flake_content, flake_name):
         flake_content = add_flake_input(flake_content, flake_name, flake_url, follows)
         flake_content = add_flake_to_outputs(flake_content, flake_name)
     
     if pkg_type == "package":
         if home_content is not None:
-            home_content = add_flake_package(home_content, flake_name, pkg_attr)
+            home_content = add_flake_package(home_content, flake_name, pkg_attr, block=block)
         else:
-            flake_content = add_flake_package(flake_content, flake_name, pkg_attr)
+            flake_content = add_flake_package(flake_content, flake_name, pkg_attr, block=block)
     elif pkg_type == "nixosModule":
         flake_content = add_flake_module(flake_content, flake_name, module_name)
     elif pkg_type == "overlay":
@@ -521,13 +553,22 @@ def remove_flake(content: str, flake_name: str) -> tuple[str, bool]:
 
 
 def remove_flake_reference(content: str, flake_name: str) -> tuple[str, bool]:
-    """Remove a flake package reference from a target file."""
-    pattern = rf'^\s*inputs\.{re.escape(flake_name)}\.packages\.\$\{{[^}}]+\}}\.\S+\s*$'
+    """Remove a flake package/overlay reference from a target file.
+
+    Matches the references nx generates:
+      inputs.<name>.packages.${<system>}.<attr>   (packages)
+      inputs.<name>.overlays.<attr>              (overlays)
+    """
+    escaped = re.escape(flake_name)
+    patterns = [
+        rf'^\s*inputs\.{escaped}\.packages\.\$\{{[^}}]+\}}\.\S+\s*$',
+        rf'^\s*inputs\.{escaped}\.overlays\.\S+\s*$',
+    ]
     lines = content.split('\n')
     new_lines = []
     found = False
     for line in lines:
-        if re.match(pattern, line):
+        if any(re.match(p, line) for p in patterns):
             found = True
             continue
         new_lines.append(line)
