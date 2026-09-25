@@ -160,17 +160,76 @@ def show_rebuild_done(success: bool):
         print("\n  ✗ nixos-rebuild failed — changes reverted.\n")
 
 
-def show_unsupported_format(status: str):
-    """Display message for unsupported systemPackages format."""
+def show_unsupported_format(status: str, block: str | None = None):
+    """Display a clear message for unsupported package-list formats."""
+    where = f"`{block}`" if block else "the package list"
     reason = {
-        "unsupported_empty": "empty systemPackages block",
-        "unsupported_missing": "missing systemPackages block",
-        "unsupported_external": "external systemPackages import",
-        "unsupported_with_pkgs": "with_pkgs detection failed",
-        "unsupported_explicit_pkgs": "explicit_pkgs detection failed",
-        "unsupported_unknown": "unknown format",
+        "unsupported_empty": (
+            f"The package list {where} is empty. nx cannot add packages to an "
+            "empty list in Beta. Add at least one package entry in a supported "
+            "format, then run the command again."
+        ),
+        "unsupported_missing": (
+            f"No package list {where} was found. nx does not create package "
+            "lists automatically in Beta. Create it in a supported format, "
+            "then run the command again."
+        ),
+        "unsupported_external": (
+            f"The package list {where} is defined in an external file. nx "
+            "cannot modify external package lists. Manage the packages in "
+            "that file directly."
+        ),
+        "unsupported_unknown": (
+            f"The package list {where} uses an unsupported format. Supported "
+            "formats: `with pkgs; [ ... ]` and explicit `pkgs.<name>` entries. "
+            "Adjust the list, then run the command again."
+        ),
+        "no_change": "No changes were made to the configuration.",
+        "error": "The configuration could not be modified.",
     }.get(status, status)
-    print(f"\n  ✗ unsupported format: {reason}\n")
+    print(f"\n  ✗ {reason}\n")
+
+
+def show_install_conflict(selected, conflicts, unstable_var: str = "unstable"):
+    """Display a clear, grouped message when pre-validation finds conflicts.
+
+    ``selected`` is the full list of Package objects the user chose.
+    ``conflicts`` is the subset of PackageIdentity objects already present.
+    """
+    # Build identity lookups so we can explain *why* each conflicted.
+    by_name = {p.name: p for p in selected}
+    lines = ["\n  Cannot install the following packages:"]
+
+    for ident in conflicts:
+        pkg = by_name.get(ident.name)
+        src_label = "stable" if ident.source == "stable" else "unstable"
+        existing = ident.reference
+        lines.append(f"\n    {ident.name}")
+        lines.append(f"      source: {src_label}")
+        lines.append(f"      existing reference: {existing}")
+
+    lines.append("\n  No changes were made.\n")
+    print("\n".join(lines))
+
+
+def show_remove_ambiguous(matches, pkg_name: str, unstable_var: str = "unstable"):
+    r"""Display ambiguity when a bare name matches both stable and unstable.
+
+    ``matches`` is a list of PackageIdentity: [stable_id, unstable_id].
+    Defaults to stable (removal), and tells the user how to target unstable.
+    """
+    stable_ref = matches[0].reference if matches[0].source == "stable" else pkg_name
+    unstable_ref = matches[1].reference if matches[1].source == "unstable" else f"{unstable_var}.{pkg_name}"
+    print()
+    print(f"  Multiple packages match '{pkg_name}':")
+    print(f"  1. {stable_ref}")
+    print(f"  2. {unstable_ref}")
+    print()
+    print(f"  Default removal target: {stable_ref}")
+    print(f"  To remove {unstable_ref} instead, specify the full reference:")
+    print(f"  nx remove {unstable_ref}")
+    print()
+
 
 def show_results_flake(packages: list[Package]) -> list[Package]:
     """Open the interactive curses browser for flakes with an 'all' option."""

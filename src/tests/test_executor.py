@@ -91,13 +91,34 @@ def test_install_works_with_flakes_enabled():
         assert result is True
 
 
+def test_flake_install_unsupported_format_rolls_back_no_rebuild():
+    """Flake install must NOT rebuild when the target block is unsupported."""
+    plan = make_plan("install", pkg_type="packages", name="vim")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        flake = Path(tmpdir) / "flake.nix"
+        flake.write_text('{ \n  inputs = {};\n  outputs = {};\n}')
+        config_nix = Path(tmpdir) / "configuration.nix"
+        # empty block — unsupported
+        config_nix.write_text('{ \n  environment.systemPackages = [ ]; \n}')
+        config = make_config(tmpdir, flake_enabled=True)
+        with patch("src.flakes.executor.subprocess.run") as mock_run:
+            with patch("src.flakes.executor.backup_files"):
+                with patch("src.flakes.executor.restore_files") as mock_restore:
+                    mock_run.return_value = MagicMock(returncode=0)
+                    result = execute(plan, config)
+        assert result is False, "must not succeed on unsupported format"
+        mock_restore.assert_called_once(), "backups must be restored"
+        mock_run.assert_not_called(), "rebuild must not happen"
+
+
 def test_install_works_with_home_manager_enabled():
     plan = make_plan("install", pkg_type="packages", name="vim")
     with tempfile.TemporaryDirectory() as tmpdir:
         flake = Path(tmpdir) / "flake.nix"
         flake.write_text('{\n  inputs = {};\n  outputs = {};\n}')
         home_nix = Path(tmpdir) / "home.nix"
-        home_nix.write_text('{\n  home.packages = [];\n}')
+        # Supported format — the test's purpose is HM routing, not format handling
+        home_nix.write_text('{\n  home.packages = with pkgs; [\n    git\n  ];\n}')
         config = make_config(tmpdir, flake_enabled=True, home_manager_enabled=True)
         with patch("src.flakes.executor.subprocess.run") as mock_run:
             with patch("src.flakes.executor.backup_files"):
@@ -271,16 +292,17 @@ def test_system_target_missing_configuration_nix_fails_cleanly():
         assert "inputs.repo.packages" not in home_out, "must not write to wrong file"
 
 
-def test_home_target_creates_missing_home_packages_block():
-    """HOME target, home.nix exists but lacks home.packages → block created
-    in home.nix (NOT written into flake.nix — the old corruption path)."""
+def test_home_target_missing_home_packages_block():
+    """HOME target, home.nix exists but lacks home.packages → Beta contract:
+    unsupported_missing, execute returns False, nothing written, no rebuild."""
     no_block = '{\n  home.username = "ayman";\n}\n'
     with tempfile.TemporaryDirectory() as tmpdir:
         result, flake_out, sys_out, home_out = _run_install(
             tmpdir, target=Target.HOME, home_text=no_block)
-        assert result is True
-        assert "home.packages" in home_out, "block must be created in home.nix"
-        assert "inputs.repo.packages" in home_out
+        assert result is False
+        assert home_out == no_block, "home.nix must remain byte-for-byte unchanged"
+        assert "home.packages" not in home_out, "nx must not create the block"
+        assert "inputs.repo.packages" not in home_out
         # the reference must NOT have leaked into flake.nix as a package entry
         import re
         leak = re.search(r'packages\.\$\{[^}]+\}\.vim', flake_out)
@@ -316,7 +338,7 @@ if __name__ == "__main__":
         test_home_target_plain_list_syntax,
         test_home_target_missing_home_nix_fails_cleanly,
         test_system_target_missing_configuration_nix_fails_cleanly,
-        test_home_target_creates_missing_home_packages_block,
+        test_home_target_missing_home_packages_block,
         test_backward_compat_system_flake_unchanged,
     ]
     passed = failed = 0

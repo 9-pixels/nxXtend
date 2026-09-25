@@ -319,17 +319,25 @@ def test_flakes_upgrade_rejected_when_flakes_disabled():
 
 def test_flakes_install_works_when_enabled():
     """When flake_enabled=true the workflow must proceed past the guard"""
-    config = {"setup": {"flake_enabled": True}}
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config_nix = Path(tmpdir) / "configuration.nix"
+        config_nix.write_text('{\n  environment.systemPackages = with pkgs; [\n    git\n  ];\n}')
+        config = {
+            "setup": {
+                "flake_enabled": True,
+                "configuration_path": str(config_nix),
+            }
+        }
 
-    with patch("main.parse_flake_url") as mock_parse:
-        with patch("main.get_metadata") as mock_meta:
-            with patch("main.get_current_system") as mock_sys:
-                with patch("main.discover", return_value=[]) as mock_disc:
-                    mock_sys.return_value = "x86_64-linux"
-                    handle_flakes_install("github:user/repo", config)
+        with patch("main.parse_flake_url") as mock_parse:
+            with patch("main.get_metadata") as mock_meta:
+                with patch("main.get_current_system") as mock_sys:
+                    with patch("main.discover", return_value=[]) as mock_disc:
+                        mock_sys.return_value = "x86_64-linux"
+                        handle_flakes_install("github:user/repo", config)
 
-    mock_parse.assert_called_once()
-    mock_disc.assert_called_once()
+        mock_parse.assert_called_once()
+        mock_disc.assert_called_once()
 
 
 def test_home_manager_guard_rejects_when_disabled():

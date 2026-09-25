@@ -13,9 +13,10 @@ from src.flakes.planner import build_plan
 from src.flakes.executor import execute
 from src.core.writer import (
     add_package, read_config, backup_files, restore_files,
-    remove_package, is_package_exists,
+    remove_package, is_package_exists, is_package_name_taken,
+    resolve_identity, resolve_remove_target, PackageIdentity,
     add_flake, remove_flake, remove_flake_reference, is_flake_name_in_content,
-    build_package_reference, detect_format
+    build_package_reference, detect_format, SUPPORTED_FORMATS,
 )
 from src.core.config import load_config, is_setup_done, CONFIG_FILE
 from src.core.target import Target, select_target, resolve_target_info, require_home_manager
@@ -24,7 +25,7 @@ from src.ui.display import (
     show_searching, show_done, show_no_results,
     show_source_select, show_results, show_results_flake,
     show_summary, show_rebuild_start, show_rebuild_done,
-    show_unsupported_format
+    show_unsupported_format, show_install_conflict, show_remove_ambiguous
 )
 from importlib.metadata import version
 
@@ -102,17 +103,54 @@ def handle_install(pkg_name: str, config: dict, requested: Target | None = None)
         return
     try:
         content = read_config(config_file)
+    except PermissionError:
+        console.print("\n  ✗ permission denied — run with sudo\n")
+        return
+
+    # Pre-mutation validation: inspect every selected package against the
+    # current configuration BEFORE any file is touched.  This enforces the
+    # stable-vs-unstable identity contract:
+    #   - requesting unstable.htop blocks if unstable.htop exists
+    #   - requesting unstable.htop also blocks if a stable htop exists
+    #     (the name is already taken in the list)
+    #   - requesting stable htop does NOT block on an existing unstable.htop
+    unstable_var = config["setup"].get("unstable_variable", "unstable")
+    fmt = detect_format(content, info.block)
+    if fmt not in SUPPORTED_FORMATS:
+        show_unsupported_format(f"unsupported_{fmt}", info.block)
+        return
+
+    conflicts = []
+    for pkg in selected:
+        identity = resolve_identity(pkg.name, pkg.source, unstable_var)
+        # Same-source collision: the exact reference already exists.
+        if is_package_exists(content, identity.reference, config_dir,
+                             info.block, source=pkg.source,
+                             unstable_var=unstable_var):
+            conflicts.append(identity)
+            continue
+        # Cross-source collision: when requesting unstable, a same-name
+        # stable entry already consumes the name → block (prevent ambiguity).
+        if pkg.source == "unstable" and is_package_name_taken(
+                content, pkg.name, config_dir, info.block, unstable_var):
+            conflicts.append(identity)
+            continue
+
+    if conflicts:
+        show_install_conflict(selected, conflicts, unstable_var)
+        return
+
+    try:
         backup_files([config_file])
     except PermissionError:
         console.print("\n  ✗ permission denied — run with sudo\n")
         return
+
     for pkg in selected:
-        fmt = detect_format(content, info.block)
-        unstable_var = config["setup"].get("unstable_variable", "unstable")
         pkg_ref = build_package_reference(pkg.name, pkg.source, fmt, unstable_var)
         result = add_package(content, pkg_ref, config_dir, info.block)
         if result.status != "success":
-            show_unsupported_format(result.status)
+            show_unsupported_format(result.status, info.block)
             restore_files([config_file])
             return
         content = result.content
@@ -140,17 +178,43 @@ def handle_remove(pkg_name: str, config: dict, requested: Target | None = None):
         return
     try:
         content = read_config(config_file)
-        if not is_package_exists(content, pkg_name, config_dir, info.block):
-            console.print(f"\n  package '{pkg_name}' not found in configuration\n")
-            return
-        confirmed = input(f"\n  remove '{pkg_name}' from configuration? (y/n): ").strip().lower()
+    except PermissionError:
+        console.print("\n  ✗ permission denied — run with sudo\n")
+        return
+
+    unstable_var = config["setup"].get("unstable_variable", "unstable")
+    fmt = detect_format(content, info.block)
+    if fmt not in SUPPORTED_FORMATS:
+        show_unsupported_format(f"unsupported_{fmt}", info.block)
+        return
+
+    target_info = resolve_remove_target(content, pkg_name, config_dir,
+                                        info.block, unstable_var)
+
+    if target_info.source == "missing":
+        console.print(f"\n  package '{pkg_name}' not found in configuration\n")
+        return
+
+    if target_info.source == "ambiguous":
+        show_remove_ambiguous(target_info.matches, pkg_name, unstable_var)
+        # ambiguous defaults to stable (matches[0])
+        confirmed = input(f"\n  remove default '{target_info.name}' from configuration? (y/n): ").strip().lower()
         if confirmed != 'y':
             return
+
+    confirmed = input(f"\n  remove '{target_info.reference}' from configuration? (y/n): ").strip().lower()
+    if confirmed != 'y':
+        return
+
+    try:
         backup_files([config_file])
     except PermissionError:
         console.print("\n  ✗ permission denied — run with sudo\n")
         return
-    new_content, found = remove_package(content, pkg_name, config_dir, info.block)
+    new_content, found = remove_package(content, pkg_name, config_dir,
+                                        info.block,
+                                        source=target_info.source if target_info.source != "ambiguous" else "stable",
+                                        unstable_var=unstable_var)
     if not found:
         console.print(f"\n  could not remove '{pkg_name}'\n")
         return
@@ -212,6 +276,19 @@ def handle_flakes_install(url: str, config: dict, requested: Target | None = Non
         _reject_home_target_unavailable()
         return
     target = select_target(config, requested)
+    info = resolve_target_info(config, target)
+
+    # Target-state pre-check: reject a missing target file and unsupported
+    # package-list formats before any resolver/discovery work and before
+    # any rebuild. All three target states (file missing, block missing,
+    # block unsupported) are rejected at this same stage.
+    if not info.file.exists():
+        console.print(f"\n  configuration file not found: {info.file}\n")
+        return
+    target_fmt = detect_format(read_config(info.file), info.block)
+    if target_fmt not in SUPPORTED_FORMATS:
+        show_unsupported_format(f"unsupported_{target_fmt}", info.block)
+        return
 
     # 1 — resolver
     source = parse_flake_url(url)

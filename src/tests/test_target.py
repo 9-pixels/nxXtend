@@ -180,8 +180,12 @@ with tempfile.TemporaryDirectory() as td:
     check("-H rejected when HM disabled (flakes path)", True)
 
 with tempfile.TemporaryDirectory() as td:
-    # flakes enabled + HM enabled + -H → proceeds past guards into resolver
+    # flakes enabled + HM enabled + -H → proceeds past guards into resolver.
+    # Target file must exist in a supported format: the pre-check rejects
+    # missing files and unsupported formats before the resolver starts.
     config = make_config(td, home_enabled=True, flake_enabled=True)
+    (Path(td) / "home.nix").write_text(
+        '{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    git\n  ];\n}\n')
     with patch("main.parse_flake_url") as mock_parse:
         with patch("main.get_metadata") as mock_meta:
             with patch("main.get_current_system", return_value="x86_64-linux"):

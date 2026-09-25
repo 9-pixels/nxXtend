@@ -14,8 +14,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
 from src.core.writer import (
     add_package, remove_package, is_package_exists, detect_format,
-    add_package_with_pkgs, add_package_explicit_pkgs, add_package_empty,
-    add_package_missing, add_flake_package,
+    add_package_with_pkgs, add_package_explicit_pkgs,
+    add_flake_package,
 )
 
 SYSTEM = "environment.systemPackages"
@@ -107,14 +107,15 @@ check("home plain: success", result.status == "success")
 check("home plain: pkgs.htop added (explicit form)", "pkgs.htop" in result.content)
 check("home plain: pkgs.git preserved", "pkgs.git" in result.content)
 
-print("\n[5] add_package — HOME block missing → creates home.packages, not systemPackages")
+print("\n[5] add_package — HOME block missing → unsupported_missing (Beta contract)")
 
 result = add_package(HOME_MISSING, "htop", Path("/tmp"), HOME)
-check("home missing: success", result.status == "success")
-check("home missing: creates home.packages block", "home.packages" in result.content)
+check("home missing: unsupported_missing", result.status == "unsupported_missing")
+check("home missing: content byte-for-byte unchanged", result.content == HOME_MISSING)
+check("home missing: does NOT create home.packages block",
+      "home.packages" not in result.content)
 check("home missing: does NOT create environment.systemPackages",
       "environment.systemPackages" not in result.content)
-check("home missing: htop inside created block", "htop" in result.content)
 
 # ── remove_package ─────────────────────────────────────────────────────────
 print("\n[6] remove_package — both targets")
@@ -154,16 +155,17 @@ check("home: HOME query on system-only file → False",
       not is_package_exists(SYS_WITH_PKGS, "git", Path("/tmp"), HOME))
 
 # ── empty block ────────────────────────────────────────────────────────────
-print("\n[8] empty blocks")
+print("\n[8] empty blocks → unsupported_empty (Beta contract)")
 
 sys_empty = "{ pkgs, ... }:\n{\n  environment.systemPackages = [ ];\n}\n"
 result = add_package(sys_empty, "htop", Path("/tmp"))
-check("system empty: success", result.status == "success")
+check("system empty: unsupported_empty", result.status == "unsupported_empty")
+check("system empty: content unchanged", result.content == sys_empty)
 
 home_empty = "{ pkgs, ... }:\n{\n  home.packages = [ ];\n}\n"
 result = add_package(home_empty, "htop", Path("/tmp"), HOME)
-check("home empty: success", result.status == "success")
-check("home empty: stays home.packages", "home.packages" in result.content)
+check("home empty: unsupported_empty", result.status == "unsupported_empty")
+check("home empty: content unchanged", result.content == home_empty)
 check("home empty: no systemPackages leak",
       "environment.systemPackages" not in result.content)
 
@@ -179,8 +181,8 @@ home_with = '''{ pkgs, ... }:
 '''
 out = add_flake_package(home_with, "test-flake", "default")
 check("flake ref added to home.packages with-pkgs form",
-      "inputs.test-flake.packages" in out)
-check("existing git preserved", "git" in out)
+      "inputs.test-flake.packages" in out.content and out.status == "success")
+check("existing git preserved", "git" in out.content)
 
 home_plain = '''{ pkgs, ... }:
 {
@@ -191,12 +193,18 @@ home_plain = '''{ pkgs, ... }:
 '''
 out = add_flake_package(home_plain, "test-flake", "default")
 check("flake ref added to home.packages plain form (regression)",
-      "inputs.test-flake.packages" in out)
+      "inputs.test-flake.packages" in out.content and out.status == "success")
+added_line = [l for l in out.content.split("\n") if "inputs.test-flake.packages" in l]
+check("flake ref line is not double-prefixed (full-line check)",
+      bool(added_line) and added_line[0].strip() == "inputs.test-flake.packages.${pkgs.stdenv.hostPlatform.system}.default",
+      f"line={added_line}")
 
 # system fallback still works when no home.packages present
 out = add_flake_package(SYS_WITH_PKGS, "test-flake", "default")
 check("flake ref falls back to systemPackages when no home block",
-      "inputs.test-flake.packages" in out and "environment.systemPackages" in out)
+      "inputs.test-flake.packages" in out.content
+      and "environment.systemPackages" in out.content
+      and out.status == "success")
 
 # ── default-arg byte-identity (SYSTEM regression) ──────────────────────────
 print("\n[10] default argument ≡ explicit SYSTEM (byte-identical)")

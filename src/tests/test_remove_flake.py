@@ -317,8 +317,10 @@ def test_add_flake_then_remove_reference_round_trip():
   ];
 }
 '''
-    content = add_flake_package(original, 'plasma-manager', 'default')
-    assert 'plasma-manager' in content
+    result = add_flake_package(original, 'plasma-manager', 'default')
+    assert result.status == "success"
+    assert 'plasma-manager' in result.content
+    content = result.content
     
     content, found = remove_flake_reference(content, 'plasma-manager')
     assert found is True
