@@ -89,7 +89,7 @@ def execute(plan: InstallationPlan, config: dict, target: Target | None = None) 
         # never turn a package operation into a Flake operation.
         if flake_enabled:
             # Flake-based install: add input + reference
-            flake_content, target_content = add_flake(
+            flake_content, target_content, add_status = add_flake(
                 flake_content=flake_content or "",
                 flake_name=plan.flake_name,
                 flake_url=plan.source.url,
@@ -98,6 +98,11 @@ def execute(plan: InstallationPlan, config: dict, target: Target | None = None) 
                 home_content=target_content,
                 block=target_block,
             )
+            if add_status != "success":
+                # Unsupported/failed format in the target file: nothing was
+                # written — restore backups and stop before any rebuild.
+                restore_files(files)
+                return False
         else:
             # Non-flake install: add package directly to configuration.nix
             fmt = detect_format(target_content)
@@ -111,7 +116,7 @@ def execute(plan: InstallationPlan, config: dict, target: Target | None = None) 
 
     elif plan.action == "configure":
         if flake_enabled:
-            flake_content, _ = add_flake(
+            flake_content, _, _ = add_flake(
                 flake_content=flake_content or "",
                 flake_name=plan.flake_name,
                 flake_url=plan.source.url,
@@ -122,7 +127,7 @@ def execute(plan: InstallationPlan, config: dict, target: Target | None = None) 
 
     elif plan.action == "overlay":
         if flake_enabled:
-            flake_content, _ = add_flake(
+            flake_content, _, _ = add_flake(
                 flake_content=flake_content or "",
                 flake_name=plan.flake_name,
                 flake_url=plan.source.url,

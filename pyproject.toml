@@ -3,25 +3,23 @@ requires = ["setuptools>=75"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "nx"
+name = "nxXtend"
 version = "0.1.0"
-description = "Interactive NixOS package and configuration manager"
+description = "Automates package management across NixOS system configuration, Home Manager, and Flakes."
 readme = "README.md"
 requires-python = ">=3.11"
-
 license = { text = "GPL-3.0-or-later" }
-
 authors = [
-    { name = "9-pixels" }
+    { name = "9-pixels" },
 ]
 
 keywords = [
-    "nixos",
     "nix",
+    "nixos",
+    "configuration",
     "package-manager",
-    "linux",
     "flakes",
-    "configuration"
+    "linux",
 ]
 
 classifiers = [
@@ -38,19 +36,19 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: System :: Installation/Setup",
-    "Topic :: System :: Systems Administration"
+    "Topic :: System :: Systems Administration",
 ]
 
 dependencies = [
     "requests>=2.32",
     "rich>=14.0",
-    "toml>=0.10"
+    "toml>=0.10",
 ]
 
 [project.urls]
-Homepage = "https://github.com/9-pixels/nx"
-Repository = "https://github.com/9-pixels/nx"
-Issues = "https://github.com/9-pixels/nx/issues"
+Homepage = "https://github.com/9-pixels/nxXtend"
+Repository = "https://github.com/9-pixels/nxXtend"
+Issues = "https://github.com/9-pixels/nxXtend/issues"
 
 [project.scripts]
 nx = "main:main"
