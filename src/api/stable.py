@@ -1,6 +1,6 @@
 import requests
-from src.api.api_config import STABLE_URL, HEADERS
-from src.models.package import Package
+from api.api_config import STABLE_URL, HEADERS
+from models.package import Package
 
 
 def stable_search(pkg_name: str) -> list[Package]:

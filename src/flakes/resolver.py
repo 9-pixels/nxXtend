@@ -1,4 +1,4 @@
-from src.flakes.models import FlakeSource
+from flakes.models import FlakeSource
 import subprocess
 import json
 

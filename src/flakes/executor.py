@@ -3,9 +3,9 @@
 
 import subprocess
 from pathlib import Path
-from src.flakes.models import InstallationPlan
-from src.core.target import Target, SYSTEM_BLOCK, HOME_BLOCK
-from src.core.writer import (
+from flakes.models import InstallationPlan
+from core.target import Target, SYSTEM_BLOCK, HOME_BLOCK
+from core.writer import (
     read_config, backup_files, restore_files,
     add_flake, add_flake_overlay, add_package, build_package_reference, detect_format
 )

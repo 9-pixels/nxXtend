@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 9-pixels
 
-from src.api.stable import stable_search
-from src.api.unstable import unstable_search
+from api.stable import stable_search
+from api.unstable import unstable_search
 
 def deduplicate(packages):
     seen = set()

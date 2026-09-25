@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-from src.core.config import CONFIG_FILE, save_config
+from core.config import CONFIG_FILE, save_config
 
 
 # ─── Palette ──────────────────────────────────────────────────────────────────
