@@ -1,4 +1,4 @@
-from src.flakes.models import FlakeSource, FlakeOutput, InstallationPlan
+from flakes.models import FlakeSource, FlakeOutput, InstallationPlan
 
 def build_plan(
     source: FlakeSource,

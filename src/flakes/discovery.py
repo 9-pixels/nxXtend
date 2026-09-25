@@ -4,7 +4,7 @@
 import subprocess
 import json
 import platform
-from src.flakes.models import FlakeSource, FlakeOutput
+from flakes.models import FlakeSource, FlakeOutput
 
 def get_current_system() -> str:
     result = subprocess.run(

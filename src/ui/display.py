@@ -3,7 +3,7 @@
 
 import curses
 import sys
-from src.models.package import Package
+from models.package import Package
 
 PAGE_SIZE = 17
 

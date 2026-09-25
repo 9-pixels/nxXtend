@@ -2,36 +2,67 @@
 # Copyright (C) 2026 9-pixels
 
 import argparse
-import sys
 import subprocess
+import sys
+from importlib.metadata import version
 from pathlib import Path
 from rich.console import Console
-from src.core.manager import search
-from src.flakes.resolver import parse_flake_url, get_metadata
-from src.flakes.discovery import discover, classify, get_current_system
-from src.flakes.planner import build_plan
-from src.flakes.executor import execute
-from src.core.writer import (
-    add_package, read_config, backup_files, restore_files,
-    remove_package, is_package_exists, is_package_name_taken,
-    resolve_identity, resolve_remove_target, PackageIdentity,
-    add_flake, remove_flake, remove_flake_reference, is_flake_name_in_content,
-    build_package_reference, detect_format, SUPPORTED_FORMATS,
+from core.config import CONFIG_FILE, is_setup_done, load_config
+from core.manager import search
+from core.target import (
+    Target,
+    require_home_manager,
+    resolve_target_info,
+    select_target,
 )
-from src.core.config import load_config, is_setup_done, CONFIG_FILE
-from src.core.target import Target, select_target, resolve_target_info, require_home_manager
-from src.ui.first_setup import first_setup
-from src.ui.display import (
-    show_searching, show_done, show_no_results,
-    show_source_select, show_results, show_results_flake,
-    show_summary, show_rebuild_start, show_rebuild_done,
-    show_unsupported_format, show_install_conflict, show_remove_ambiguous
+from core.writer import (
+    PackageIdentity,
+    SUPPORTED_FORMATS,
+    add_flake,
+    add_package,
+    backup_files,
+    build_package_reference,
+    detect_format,
+    is_flake_name_in_content,
+    is_package_exists,
+    is_package_name_taken,
+    read_config,
+    remove_flake,
+    remove_flake_reference,
+    remove_package,
+    resolve_identity,
+    resolve_remove_target,
+    restore_files,
 )
-from importlib.metadata import version
+
+from flakes.discovery import (
+    classify,
+    discover,
+    get_current_system,
+)
+from flakes.executor import execute
+from flakes.planner import build_plan
+from flakes.resolver import get_metadata, parse_flake_url
+
+from ui.display import (
+    show_done,
+    show_install_conflict,
+    show_no_results,
+    show_rebuild_done,
+    show_rebuild_start,
+    show_results,
+    show_results_flake,
+    show_searching,
+    show_source_select,
+    show_summary,
+    show_remove_ambiguous,
+    show_unsupported_format,
+)
+from ui.first_setup import first_setup
 
 
 try:
-    VERSION = version("nx")
+    VERSION = version("nxXtend")
 except Exception:
     VERSION = "dev"
 

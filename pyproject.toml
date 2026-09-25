@@ -55,6 +55,11 @@ nx = "main:main"
 
 [tool.setuptools]
 include-package-data = true
+package-dir = {"" = "src"}
+py-modules = ["main"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

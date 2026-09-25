@@ -2,7 +2,7 @@ import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from src.models.package import Package
+from models.package import Package
 
 
 @dataclass
