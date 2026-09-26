@@ -47,4 +47,4 @@ TODO.md
 config.toml.example
 setup.py
 test-home/
-result/
+result
