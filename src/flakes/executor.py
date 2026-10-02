@@ -116,13 +116,15 @@ def execute(plan: InstallationPlan, config: dict, target: Target | None = None) 
 
     elif plan.action == "configure":
         if flake_enabled:
+            target_config = config.get("setup", {}).get("nixos_configuration")
             flake_content, _, _ = add_flake(
                 flake_content=flake_content or "",
                 flake_name=plan.flake_name,
                 flake_url=plan.source.url,
                 pkg_attr=plan.output.name,
                 pkg_type="nixosModule",
-                module_name=plan.output.name
+                module_name=plan.output.name,
+                target_config=target_config,
             )
 
     elif plan.action == "overlay":
