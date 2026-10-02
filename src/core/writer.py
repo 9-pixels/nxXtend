@@ -653,39 +653,287 @@ def add_flake_package(content: str, flake_name: str, pkg_attr: str, system_var: 
     return add_package(content, pkg_line, Path("."))
 
 
-def add_flake_module(content: str, flake_name: str, module_name: str) -> str:
-    """Add a nixosModule reference to the modules list in flake.nix."""
-    module_line = f"{flake_name}.nixosModules.{module_name}"
-    
-    match = re.search(r'modules\s*=\s*\[', content)
-    if not match:
-        return content
-    
-    pos = match.end()
+def _find_brace_end(content: str, open_pos: int) -> int | None:
+    """Return the index of the `}` matching the `{` at open_pos, or None.
+
+    Correctly skips over:
+      * double-quoted strings (with ``\\`` escaped characters)
+      * Nix ``#`` line comments
+      * Nix indented strings (``'' ... ''``)
+    """
     depth = 1
-    while pos < len(content) and depth > 0:
-        if content[pos] == '[':
+    pos = open_pos + 1
+    n = len(content)
+    while pos < n:
+        ch = content[pos]
+        if ch == "#":
+            nl = content.find("\n", pos)
+            pos = n if nl == -1 else nl + 1
+            continue
+        if ch == '"':
+            # Double-quoted string with escape handling.
+            pos += 1
+            while pos < n:
+                if content[pos] == "\\":
+                    pos += 2
+                    continue
+                if content[pos] == '"':
+                    pos += 1
+                    break
+                pos += 1
+            continue
+        if content.startswith("''", pos):
+            end = content.find("''", pos + 2)
+            if end == -1:
+                return None
+            pos = end + 2
+            continue
+        if ch == "{":
             depth += 1
-        elif content[pos] == ']':
+        elif ch == "}":
             depth -= 1
+            if depth == 0:
+                return pos
         pos += 1
-    
-    closing_pos = pos - 1
-    
-    inner = content[match.end():closing_pos]
+    return None
+
+
+def _find_nixos_modules_list(
+    content: str, target_config: str | None = None
+) -> tuple[int, int, int] | None:
+    """Locate the top-level ``modules = [ ... ]`` list inside a nixosSystem.
+
+    Searches for ``nixosConfigurations.<name>`` (the first one when
+    *target_config* is None, or the one matching *target_config*
+    otherwise).
+
+    From that configuration, it locates the ``nixosSystem`` invocation and
+    its argument attrset. The target ``modules = [ ... ]`` must be at the
+    top level of that attrset. Nested lists such as:
+
+        specialArgs = {
+            modules = [
+                ./fake.nix
+            ];
+        };
+
+    are deliberately ignored.
+
+    Returns ``(match_start, list_open_pos, list_close_pos)`` where
+    ``match_start`` is the start of ``modules =``, ``list_open_pos`` is the
+    opening ``[``, and ``list_close_pos`` is the matching closing ``]``.
+
+    Returns ``None`` when the expected structure cannot be located.
+
+    This function is intentionally fail-safe: it never falls back to a
+    global ``modules = [`` search.
+    """
+    cfg_re = re.compile(
+        r"nixosConfigurations\s*\.\s*"
+        + (
+            re.escape(target_config)
+            if target_config
+            else r"[A-Za-z_][\w-]*"
+        )
+    )
+
+    cfg_match = cfg_re.search(content)
+    if not cfg_match:
+        return None
+
+    pos = cfg_match.end()
+    n = len(content)
+
+    ns_kw_re = re.compile(r"\bnixosSystem\b")
+    next_cfg_re = re.compile(r"nixosConfigurations\s*\.")
+
+    search_region_end = n
+    next_cfg = next_cfg_re.search(content, pos)
+    if next_cfg:
+        search_region_end = next_cfg.start()
+
+    ns_match = ns_kw_re.search(content, pos)
+    if not ns_match or ns_match.start() >= search_region_end:
+        return None
+
+    ns_end = ns_match.end()
+
+    # The nixosSystem argument attrset must begin after the keyword.
+    brace_pos = _skip_ws_and_comments(content, ns_end)
+
+    if brace_pos >= n or content[brace_pos] != "{":
+        return None
+
+    block_end = _find_brace_end(content, brace_pos)
+    if block_end is None:
+        return None
+
+    # Scan only the nixosSystem attrset and track brace depth.
+    #
+    # depth == 0 means we are directly inside:
+    #
+    #   nixosSystem {
+    #       ...
+    #   }
+    #
+    # Nested attrsets such as specialArgs = { ... } therefore have
+    # depth > 0 and their ``modules`` keys are ignored.
+    i = brace_pos + 1
+    depth = 0
+
+    while i < block_end:
+        i = _skip_ws_and_comments(content, i)
+
+        if i >= block_end:
+            break
+
+        char = content[i]
+
+        # Skip strings completely so text such as:
+        # "modules = ["
+        # cannot be mistaken for real Nix syntax.
+        if char == '"':
+            i += 1
+            while i < block_end:
+                if content[i] == "\\":
+                    i += 2
+                    continue
+                if content[i] == '"':
+                    i += 1
+                    break
+                i += 1
+            continue
+
+        # Skip Nix indented strings.
+        if content.startswith("''", i):
+            end = content.find("''", i + 2, block_end)
+            if end == -1:
+                return None
+            i = end + 2
+            continue
+
+        if char == "{":
+            depth += 1
+            i += 1
+            continue
+
+        if char == "}":
+            depth -= 1
+            i += 1
+            continue
+
+        # Only inspect ``modules = [`` at the top level of the
+        # nixosSystem attrset.
+        if depth == 0 and content.startswith("modules", i):
+            match = re.match(r"modules\s*=\s*\[", content[i:block_end])
+
+            if match:
+                list_open = i + match.end() - 1
+                list_close = _find_list_end(content, list_open)
+
+                if list_close is None or list_close > block_end:
+                    return None
+
+                return (i, list_open, list_close)
+
+        i += 1
+
+    return None
+
+
+def add_flake_module(
+    content: str,
+    flake_name: str,
+    module_name: str,
+    target_config: str | None = None,
+) -> str:
+    """Add a nixosModule reference to the modules list in flake.nix.
+
+    *target_config* (if provided) selects which
+    ``nixosConfigurations.<name>`` block to target.  When omitted the first
+    ``nixosConfigurations`` declaration is used.  The function only writes
+    into a ``modules = [ ... ]`` list that belongs to a ``nixosSystem``
+    invocation — it never falls back to a global ``modules = [`` search, so
+    unrelated ``modules`` lists in the flake are left untouched.
+
+    Formatting contract:
+      * the new element lines up with the existing elements of the list —
+        never with the closing brace of a nested attrset that happens to be
+        the last element;
+      * the closing ``];`` keeps the indentation it already had, so it never
+        collapses to column 0.
+    """
+    module_line = f"{flake_name}.nixosModules.{module_name}"
+
+    found = _find_nixos_modules_list(content, target_config)
+    if found is None:
+        # No nixosSystem block found — fail safe, do not mutate.
+        return content
+
+    _, list_open, list_close = found
+
+    inner = content[list_open + 1:list_close]
     if module_line in inner:
         return content
-    
-    lines = inner.split('\n')
-    indent = "        "
-    for line in lines:
-        stripped = line.strip()
-        if stripped and not stripped.startswith('#'):
-            indent = line[:len(line) - len(line.lstrip())]
-            break
-    
-    return content[:closing_pos] + f"{indent}{module_line}\n" + content[closing_pos:]
 
+    # ── single-line list: keep it on one line ──────────────────────────────
+    # `modules = [ ./configuration.nix ];` must not be exploded into a
+    # multi-line block — the new element is appended in place.
+    if "\n" not in inner:
+        stripped = content[:list_close].rstrip(" \t")
+        return stripped + f" {module_line} " + content[list_close:]
+
+    # ── indentation of the new list element ────────────────────────────────
+    # Taken from the first real element of the list (its own line's leading
+    # whitespace).  The *last* line inside the list is deliberately not used:
+    # when the last element is a nested attrset, that line is its closing
+    # brace, whose indentation is wrong for a sibling element.
+    element_indent = None
+    for line in inner.split("\n")[1:]:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            element_indent = line[: len(line) - len(line.lstrip())]
+            break
+
+    # ── indentation of the `modules = [` statement itself ──────────────────
+    mod_line_start = content.rfind("\n", 0, list_open) + 1
+    mod_prefix = content[mod_line_start:list_open]
+    mod_indent = mod_prefix[: len(mod_prefix) - len(mod_prefix.lstrip())]
+
+    if element_indent is None:
+        # Empty multi-line list: no element line to copy, so derive the
+        # element indentation from the statement it belongs to.
+        element_indent = mod_indent + "  "
+
+    # ── keep the closing `]` on its own correctly indented line ────────────
+    close_line_start = content.rfind("\n", 0, list_close) + 1
+    close_prefix = content[close_line_start:list_close]
+
+    if close_prefix.strip() == "":
+        # `]` already sits alone on its line: that whitespace is the closing
+        # indentation.  Preserve it instead of letting the new element line
+        # absorb it (which is what pushed `];` to column 0).
+        closing_indent = close_prefix
+        head = content[:close_line_start]
+    else:
+        # `]` shares its line with the last element — split it off.
+        closing_indent = mod_indent
+        head = content[:list_close].rstrip(" \t")
+
+    if not head.endswith("\n"):
+        head += "\n"
+
+    # Blank line between a preceding multi-line attrset element and the new
+    # element, matching the surrounding style.
+    if head.rstrip("\n").endswith("}") and not head.endswith("\n\n"):
+        head += "\n"
+
+    return (
+        head
+        + f"{element_indent}{module_line}\n"
+        + closing_indent
+        + content[list_close:]
+    )
 
 def add_flake_overlay(content: str, flake_name: str, overlay_name: str) -> str:
     """Add an overlay reference to nixpkgs.overlays, creating it if needed.
@@ -739,6 +987,7 @@ def add_flake(
     home_content: str = None,
     follows: bool = True,
     block: str | None = None,
+    target_config: str | None = None,
 ) -> tuple[str, str | None, str]:
     """High-level function to add a flake input and reference.
 
@@ -767,7 +1016,8 @@ def add_flake(
             flake_content = result.content
             status = result.status
     elif pkg_type == "nixosModule":
-        flake_content = add_flake_module(flake_content, flake_name, module_name)
+        flake_content = add_flake_module(flake_content, flake_name, module_name,
+                                         target_config=target_config)
     elif pkg_type == "overlay":
         pass
     elif pkg_type == "homeModule":

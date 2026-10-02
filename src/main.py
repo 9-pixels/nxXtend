@@ -350,6 +350,8 @@ def handle_flakes_install(url: str, config: dict, requested: Target | None = Non
 
     # 6 — display plan and confirmation
     confirmed = show_summary([selected])
+    if not confirmed:
+        return
 
     # 7 — executor (target flows through: input → flake.nix, reference → target file)
     show_rebuild_start()
@@ -468,7 +470,7 @@ def handle_flakes_upgrade(config: dict):
 
     flake_path = Path(config["setup"]["flake_path"])
     flake_dir = flake_path.parent
-    result = subprocess.run(["nix", "flake", "update", str(flake_dir)], cwd=str(flake_dir))
+    result = subprocess.run(["nix", "flake", "update", "--flake", str(flake_dir)], cwd=str(flake_dir))
     if result.returncode != 0:
         show_rebuild_done(False)
         return
