@@ -5,11 +5,18 @@ from api.stable import stable_search
 from api.unstable import unstable_search
 
 def deduplicate(packages):
+    """Drop duplicate packages, keyed by Nix attribute identity.
+
+    Keyed on ``attribute`` (package_attr_name) rather than ``name``: a
+    package's upstream pname is not its attribute — the attribute
+    ``nxXtend`` has pname ``nx`` — so deduplicating on pname would collapse
+    distinct packages into one and hide the rest.
+    """
     seen = set()
     result = []
     for pkg in packages:
-        if pkg.name not in seen:
-            seen.add(pkg.name)
+        if pkg.attribute not in seen:
+            seen.add(pkg.attribute)
             result.append(pkg)
     return result
 
