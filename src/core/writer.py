@@ -841,6 +841,117 @@ def _find_nixos_modules_list(
     return None
 
 
+def _find_outermost_close(content: str) -> int | None:
+    """Index of the file's last top-level ``}``, skipping strings/comments.
+
+    Used as the insertion anchor when a whole new attribute block must be
+    appended. ``str.rfind('}')`` is unsafe here: a ``}`` inside a string or
+    a trailing comment would be picked instead of the real closing brace,
+    splicing the new block into the middle of that literal.
+    """
+    depth = 0
+    last = None
+    pos = 0
+    n = len(content)
+    while pos < n:
+        ch = content[pos]
+        if ch == "#":
+            nl = content.find("\n", pos)
+            pos = n if nl == -1 else nl + 1
+            continue
+        if ch == '"':
+            pos += 1
+            while pos < n:
+                if content[pos] == "\\":
+                    pos += 2
+                    continue
+                if content[pos] == '"':
+                    pos += 1
+                    break
+                pos += 1
+            continue
+        if content.startswith("''", pos):
+            end = content.find("''", pos + 2)
+            if end == -1:
+                break
+            pos = end + 2
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                last = pos
+        pos += 1
+    return last
+
+
+def _insert_list_element(content: str, list_open: int, list_close: int,
+                         element: str) -> str:
+    """Insert *element* into the list spanning [list_open, list_close].
+
+    Shared by add_flake_module and add_flake_overlay so both obey the same
+    formatting contract:
+
+      * the new entry lines up with the list's existing entries;
+      * the closing ``]`` keeps its own line and indentation — it must never
+        collapse to column 0;
+      * a non-empty one-line list keeps its inline shape;
+      * an empty list (``[]`` or a blank multi-line list) is expanded.
+
+    Indentation is taken from the statement that owns the list and from the
+    first real entry — never from the last line, which may be the closing
+    brace of a nested attrset rather than a sibling entry.
+    """
+    inner = content[list_open + 1:list_close]
+
+    # Non-empty one-line list: append in place, keep it on one line.
+    if "\n" not in inner and inner.strip():
+        return (content[:list_close].rstrip(" \t")
+                + f" {element} " + content[list_close:])
+
+    # Indentation of the first real entry of the list.
+    element_indent = None
+    for line in inner.split("\n")[1:]:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            element_indent = line[: len(line) - len(line.lstrip())]
+            break
+
+    # Indentation of the statement that owns the list.
+    line_start = content.rfind("\n", 0, list_open) + 1
+    prefix = content[line_start:list_open]
+    statement_indent = prefix[: len(prefix) - len(prefix.lstrip())]
+
+    if element_indent is None:
+        # Empty list: no entry to copy from, derive it from the statement.
+        element_indent = statement_indent + "  "
+
+    # Keep the closing bracket on its own, correctly indented line.
+    close_line_start = content.rfind("\n", 0, list_close) + 1
+    close_prefix = content[close_line_start:list_close]
+
+    if close_prefix.strip() == "":
+        # `]` already sits alone on its line: preserve that indentation
+        # instead of letting the new entry line absorb it.
+        closing_indent = close_prefix
+        head = content[:close_line_start]
+    else:
+        # `]` shares its line with the last entry — split it off.
+        closing_indent = statement_indent
+        head = content[:list_close].rstrip(" \t")
+
+    if not head.endswith("\n"):
+        head += "\n"
+
+    # Blank line after a multi-line attrset entry, matching surrounding style.
+    if head.rstrip("\n").endswith("}") and not head.endswith("\n\n"):
+        head += "\n"
+
+    return (head + f"{element_indent}{element}\n"
+            + closing_indent + content[list_close:])
+
+
 def add_flake_module(
     content: str,
     flake_name: str,
@@ -856,12 +967,9 @@ def add_flake_module(
     invocation — it never falls back to a global ``modules = [`` search, so
     unrelated ``modules`` lists in the flake are left untouched.
 
-    Formatting contract:
-      * the new element lines up with the existing elements of the list —
-        never with the closing brace of a nested attrset that happens to be
-        the last element;
-      * the closing ``];`` keeps the indentation it already had, so it never
-        collapses to column 0.
+    Formatting is delegated to _insert_list_element: the new element lines
+    up with the existing entries, and the closing ``];`` keeps its
+    indentation instead of collapsing to column 0.
     """
     module_line = f"{flake_name}.nixosModules.{module_name}"
 
@@ -872,68 +980,10 @@ def add_flake_module(
 
     _, list_open, list_close = found
 
-    inner = content[list_open + 1:list_close]
-    if module_line in inner:
+    if module_line in content[list_open + 1:list_close]:
         return content
 
-    # ── single-line list: keep it on one line ──────────────────────────────
-    # `modules = [ ./configuration.nix ];` must not be exploded into a
-    # multi-line block — the new element is appended in place.
-    if "\n" not in inner:
-        stripped = content[:list_close].rstrip(" \t")
-        return stripped + f" {module_line} " + content[list_close:]
-
-    # ── indentation of the new list element ────────────────────────────────
-    # Taken from the first real element of the list (its own line's leading
-    # whitespace).  The *last* line inside the list is deliberately not used:
-    # when the last element is a nested attrset, that line is its closing
-    # brace, whose indentation is wrong for a sibling element.
-    element_indent = None
-    for line in inner.split("\n")[1:]:
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#"):
-            element_indent = line[: len(line) - len(line.lstrip())]
-            break
-
-    # ── indentation of the `modules = [` statement itself ──────────────────
-    mod_line_start = content.rfind("\n", 0, list_open) + 1
-    mod_prefix = content[mod_line_start:list_open]
-    mod_indent = mod_prefix[: len(mod_prefix) - len(mod_prefix.lstrip())]
-
-    if element_indent is None:
-        # Empty multi-line list: no element line to copy, so derive the
-        # element indentation from the statement it belongs to.
-        element_indent = mod_indent + "  "
-
-    # ── keep the closing `]` on its own correctly indented line ────────────
-    close_line_start = content.rfind("\n", 0, list_close) + 1
-    close_prefix = content[close_line_start:list_close]
-
-    if close_prefix.strip() == "":
-        # `]` already sits alone on its line: that whitespace is the closing
-        # indentation.  Preserve it instead of letting the new element line
-        # absorb it (which is what pushed `];` to column 0).
-        closing_indent = close_prefix
-        head = content[:close_line_start]
-    else:
-        # `]` shares its line with the last element — split it off.
-        closing_indent = mod_indent
-        head = content[:list_close].rstrip(" \t")
-
-    if not head.endswith("\n"):
-        head += "\n"
-
-    # Blank line between a preceding multi-line attrset element and the new
-    # element, matching the surrounding style.
-    if head.rstrip("\n").endswith("}") and not head.endswith("\n\n"):
-        head += "\n"
-
-    return (
-        head
-        + f"{element_indent}{module_line}\n"
-        + closing_indent
-        + content[list_close:]
-    )
+    return _insert_list_element(content, list_open, list_close, module_line)
 
 def add_flake_overlay(content: str, flake_name: str, overlay_name: str) -> str:
     """Add an overlay reference to nixpkgs.overlays, creating it if needed.
@@ -941,39 +991,41 @@ def add_flake_overlay(content: str, flake_name: str, overlay_name: str) -> str:
     The reference uses the `inputs.` namespace: the overlay line is written
     into configuration.nix/home.nix, where only `inputs.<name>` is in scope
     (via specialArgs), never the bare flake name.
+
+    Formatting is delegated to _insert_list_element, so an existing list
+    keeps its entry indentation and its closing ``];`` line. When no list
+    exists, a new block is appended before the file's outermost ``}`` —
+    located with a string/comment-aware scan, not ``str.rfind('}')``.
     """
     overlay_line = f"inputs.{flake_name}.overlays.{overlay_name}"
-    
+
     match = re.search(r'nixpkgs\.overlays\s*=\s*\[', content)
     if match:
-        pos = match.end()
-        depth = 1
-        while pos < len(content) and depth > 0:
-            if content[pos] == '[':
-                depth += 1
-            elif content[pos] == ']':
-                depth -= 1
-            pos += 1
-        
-        closing_pos = pos - 1
-        inner = content[match.end():closing_pos]
-        
-        if overlay_line in inner:
+        list_open = match.end() - 1
+        list_close = _find_list_end(content, list_open)
+        if list_close is None:
             return content
-        
-        lines = inner.split('\n')
-        indent = "    "
-        for line in lines:
-            stripped = line.strip()
-            if stripped and not stripped.startswith('#'):
-                indent = line[:len(line) - len(line.lstrip())]
-                break
-        
-        return content[:closing_pos] + f"{indent}{overlay_line}\n" + content[closing_pos:]
-    
-    last_brace = content.rfind('}')
-    new_block = f"\n  nixpkgs.overlays = [\n    {overlay_line}\n  ];\n"
-    return content[:last_brace] + new_block + content[last_brace:]
+
+        if overlay_line in content[list_open + 1:list_close]:
+            return content
+
+        return _insert_list_element(content, list_open, list_close, overlay_line)
+
+    anchor = _find_outermost_close(content)
+    if anchor is None:
+        return content
+
+    # Indent the new block to match the file's existing top-level attributes.
+    line_start = content.rfind("\n", 0, anchor) + 1
+    prefix = content[line_start:anchor]
+    body_indent = prefix[: len(prefix) - len(prefix.lstrip())] or "  "
+
+    new_block = (
+        f"{body_indent}nixpkgs.overlays = [\n"
+        f"{body_indent}  {overlay_line}\n"
+        f"{body_indent}];\n"
+    )
+    return content[:anchor] + new_block + content[anchor:]
 
 
 def add_flake(

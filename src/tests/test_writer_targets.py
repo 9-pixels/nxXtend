@@ -313,6 +313,80 @@ out = add_flake_overlay(home_with_overlay, "new-flake", "default")
 check("HOME content: overlay add preserves home.packages block",
       "home.packages" in out and "git" in out)
 
+print("\n[14] overlay insertion formatting (regression)")
+
+# B: inline empty list must be expanded, not spliced
+out = add_flake_overlay('{ config, pkgs, inputs, ... }:\n{\n  nixpkgs.overlays = [];\n}\n',
+                        "example", "default")
+check("inline []: expanded to a proper block",
+      "  nixpkgs.overlays = [\n    inputs.example.overlays.default\n  ];\n" in out)
+check("inline []: ']' not left at column 0", "\n];" not in out)
+
+# C: empty multi-line list
+out = add_flake_overlay('{ config, pkgs, inputs, ... }:\n{\n  nixpkgs.overlays = [\n  ];\n}\n',
+                        "example", "default")
+check("empty multiline: entry indented to 4",
+      "  nixpkgs.overlays = [\n    inputs.example.overlays.default\n  ];\n" in out)
+check("empty multiline: ']' not left at column 0", "\n];" not in out)
+
+# D: existing entry keeps its indentation, new entry aligns with it
+out = add_flake_overlay(
+    '{ config, pkgs, inputs, ... }:\n{\n  nixpkgs.overlays = [\n'
+    '    inputs.other.overlays.default\n  ];\n}\n',
+    "example", "default")
+check("existing entry: sibling preserved",
+      "    inputs.other.overlays.default\n" in out)
+check("existing entry: new entry aligned at 4 spaces",
+      "    inputs.other.overlays.default\n    inputs.example.overlays.default\n" in out)
+check("existing entry: ']' not left at column 0", "\n];" not in out)
+
+# A: no list at all -> block created with matching body indentation
+out = add_flake_overlay('{ config, pkgs, inputs, ... }:\n{\n  system.stateVersion = "26.05";\n}\n',
+                        "example", "default")
+check("no list: block created with body indentation",
+      "  nixpkgs.overlays = [\n    inputs.example.overlays.default\n  ];\n" in out)
+check("no list: inserted before the closing brace",
+      out.rstrip().endswith("];\n}") or out.rstrip().endswith("];\n}\n".rstrip()))
+
+# Anchor safety: '}' inside a comment must not be used as the insertion point
+commented = '{ pkgs, ... }:\n{\n  a = 1;\n}\n# note with } brace\n'
+out = add_flake_overlay(commented, "example", "default")
+check("'}' in comment: block inserted inside the real attrset",
+      "  a = 1;\n  nixpkgs.overlays = [" in out)
+check("'}' in comment: trailing comment left intact",
+      out.rstrip().endswith("# note with } brace"))
+check("'}' in comment: ']' not left at column 0", "\n];" not in out)
+
+# Anchor safety: '}' inside a string
+out = add_flake_overlay('{ pkgs, ... }:\n{\n  b = "contains } brace";\n}\n',
+                        "example", "default")
+check("'}' in string: block inserted inside the real attrset",
+      "  b = \"contains } brace\";\n  nixpkgs.overlays = [" in out)
+check("'}' in string: ']' not left at column 0", "\n];" not in out)
+
+# Anchor safety: '}' inside an indented string
+out = add_flake_overlay("{ pkgs, ... }:\n{\n  b = ''\n    text } here\n  '';\n}\n",
+                        "example", "default")
+check("'}' in indented string: block inserted inside the real attrset",
+      "  '';\n  nixpkgs.overlays = [" in out)
+check("'}' in indented string: ']' not left at column 0", "\n];" not in out)
+
+# ']' inside a string must not confuse list-end detection
+out = add_flake_overlay(
+    '{ pkgs, ... }:\n{\n  nixpkgs.overlays = [\n    inputs.other.overlays.default\n'
+    '  ];\n  note = "text with ] bracket";\n}\n',
+    "example", "default")
+check("']' in string: list still closed at the real ']'",
+      "    inputs.other.overlays.default\n    inputs.example.overlays.default\n  ];\n" in out)
+check("']' in string: following attribute untouched",
+      'note = "text with ] bracket";' in out)
+
+# Duplicate guard
+once = add_flake_overlay('{ config, pkgs, inputs, ... }:\n{\n  nixpkgs.overlays = [];\n}\n',
+                         "example", "default")
+check("duplicate overlay: second call is a no-op",
+      add_flake_overlay(once, "example", "default") == once)
+
 
 print("\n" + "=" * 70)
 print(f"RESULTS: {len(PASS)} passed, {len(FAIL)} failed")
