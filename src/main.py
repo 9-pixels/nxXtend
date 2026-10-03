@@ -153,7 +153,9 @@ def handle_install(pkg_name: str, config: dict, requested: Target | None = None)
 
     conflicts = []
     for pkg in selected:
-        identity = resolve_identity(pkg.name, pkg.source, unstable_var)
+        # Nix identity is the attribute path (package_attr_name), never the
+        # upstream pname: `nx` and `nxXtend` are different packages.
+        identity = resolve_identity(pkg.attribute, pkg.source, unstable_var)
         # Same-source collision: the exact reference already exists.
         if is_package_exists(content, identity.reference, config_dir,
                              info.block, source=pkg.source,
@@ -163,7 +165,7 @@ def handle_install(pkg_name: str, config: dict, requested: Target | None = None)
         # Cross-source collision: when requesting unstable, a same-name
         # stable entry already consumes the name → block (prevent ambiguity).
         if pkg.source == "unstable" and is_package_name_taken(
-                content, pkg.name, config_dir, info.block, unstable_var):
+                content, pkg.attribute, config_dir, info.block, unstable_var):
             conflicts.append(identity)
             continue
 
@@ -178,7 +180,7 @@ def handle_install(pkg_name: str, config: dict, requested: Target | None = None)
         return
 
     for pkg in selected:
-        pkg_ref = build_package_reference(pkg.name, pkg.source, fmt, unstable_var)
+        pkg_ref = build_package_reference(pkg.attribute, pkg.source, fmt, unstable_var)
         result = add_package(content, pkg_ref, config_dir, info.block)
         if result.status != "success":
             show_unsupported_format(result.status, info.block)

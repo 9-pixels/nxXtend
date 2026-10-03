@@ -162,6 +162,7 @@ def test_install_rollback_on_rebuild_failure():
 
         pkg = MagicMock()
         pkg.name = "vim"
+        pkg.attribute = "vim"   # Nix identity (package_attr_name)
         pkg.source = "stable"
         pkg.version = "9.0"
 
@@ -198,6 +199,7 @@ def test_install_keeps_changes_on_success():
 
         pkg = MagicMock()
         pkg.name = "vim"
+        pkg.attribute = "vim"   # Nix identity (package_attr_name)
         pkg.source = "stable"
         pkg.version = "9.0"
 

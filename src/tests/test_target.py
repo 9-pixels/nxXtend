@@ -134,7 +134,7 @@ with tempfile.TemporaryDirectory() as td:
     conf.write_text('{ pkgs, ... }:\n{\n  environment.systemPackages = with pkgs; [ git ];\n}\n')
     home.write_text('{ pkgs, ... }:\n{\n  home.packages = with pkgs; [ git ];\n}\n')
 
-    pkg = MagicMock(); pkg.name = "firefox"; pkg.source = "stable"; pkg.version = "1.0"
+    pkg = MagicMock(); pkg.name = "firefox"; pkg.attribute = "firefox"; pkg.source = "stable"; pkg.version = "1.0"
 
     def mock_search(name):
         yield "stable", [pkg]
