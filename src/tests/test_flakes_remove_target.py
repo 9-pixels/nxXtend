@@ -12,7 +12,7 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from src.core.target import Target, select_target, resolve_target_info
+from core.target import Target, select_target, resolve_target_info
 from main import handle_flakes_remove
 
 PASS, FAIL = [], []

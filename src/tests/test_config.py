@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 
-from src.core.config import (
+from core.config import (
     CONFIG_TEMPLATE, SETUP_DEFAULTS, validate_setup_value, validate_and_repair,
     create_fresh_config, load_config, is_setup_done, mark_setup_complete,
     CONFIG_DIR, CONFIG_FILE
@@ -276,8 +276,8 @@ def test_create_fresh_config():
         config_dir.mkdir(parents=True, exist_ok=True)
         config_file = config_dir / "config.toml"
         
-        with patch("src.core.config.CONFIG_DIR", config_dir), \
-             patch("src.core.config.CONFIG_FILE", config_file):
+        with patch("core.config.CONFIG_DIR", config_dir), \
+             patch("core.config.CONFIG_FILE", config_file):
             create_fresh_config()
             
             content = config_file.read_text()
@@ -299,8 +299,8 @@ def test_validate_and_repair_preserves_valid_values():
         config_file = Path(tmpdir) / "config.toml"
         config_file.write_text(VALID_WITH_PKGS)
         
-        with patch("src.core.config.CONFIG_DIR", Path(tmpdir)), \
-             patch("src.core.config.CONFIG_FILE", config_file):
+        with patch("core.config.CONFIG_DIR", Path(tmpdir)), \
+             patch("core.config.CONFIG_FILE", config_file):
             validate_and_repair()
             
             content = config_file.read_text()
@@ -325,8 +325,8 @@ def test_validate_and_repair_adds_missing_keys():
         config_file = Path(tmpdir) / "config.toml"
         config_file.write_text(MISSING_UNSTABLE_VAR)
         
-        with patch("src.core.config.CONFIG_DIR", Path(tmpdir)), \
-             patch("src.core.config.CONFIG_FILE", config_file):
+        with patch("core.config.CONFIG_DIR", Path(tmpdir)), \
+             patch("core.config.CONFIG_FILE", config_file):
             validate_and_repair()
             
             content = config_file.read_text()
@@ -347,8 +347,8 @@ def test_validate_and_repair_restores_missing_sections():
         config_file = Path(tmpdir) / "config.toml"
         config_file.write_text(MISSING_FUTURE_SECTION)
         
-        with patch("src.core.config.CONFIG_DIR", Path(tmpdir)), \
-             patch("src.core.config.CONFIG_FILE", config_file):
+        with patch("core.config.CONFIG_DIR", Path(tmpdir)), \
+             patch("core.config.CONFIG_FILE", config_file):
             validate_and_repair()
             
             content = config_file.read_text()
@@ -370,8 +370,8 @@ def test_validate_and_repair_handles_corrupted_toml():
         config_file = Path(tmpdir) / "config.toml"
         config_file.write_text(CORRUPTED_TOML)
         
-        with patch("src.core.config.CONFIG_DIR", Path(tmpdir)), \
-             patch("src.core.config.CONFIG_FILE", config_file):
+        with patch("core.config.CONFIG_DIR", Path(tmpdir)), \
+             patch("core.config.CONFIG_FILE", config_file):
             validate_and_repair()
             
             content = config_file.read_text()
@@ -392,8 +392,8 @@ def test_validate_and_repair_missing_setup_done():
         config_file = Path(tmpdir) / "config.toml"
         config_file.write_text(MISSING_SETUP_DONE)
         
-        with patch("src.core.config.CONFIG_DIR", Path(tmpdir)), \
-             patch("src.core.config.CONFIG_FILE", config_file):
+        with patch("core.config.CONFIG_DIR", Path(tmpdir)), \
+             patch("core.config.CONFIG_FILE", config_file):
             validate_and_repair()
             
             content = config_file.read_text()
@@ -413,8 +413,8 @@ def test_validate_and_repair_invalid_setup_done():
         config_file = Path(tmpdir) / "config.toml"
         config_file.write_text(INVALID_SETUP_DONE)
         
-        with patch("src.core.config.CONFIG_DIR", Path(tmpdir)), \
-             patch("src.core.config.CONFIG_FILE", config_file):
+        with patch("core.config.CONFIG_DIR", Path(tmpdir)), \
+             patch("core.config.CONFIG_FILE", config_file):
             validate_and_repair()
             
             content = config_file.read_text()
@@ -430,8 +430,8 @@ def test_load_config_creates_fresh_if_missing():
     with tempfile.TemporaryDirectory() as tmpdir:
         config_file = Path(tmpdir) / "config.toml"
         
-        with patch("src.core.config.CONFIG_DIR", Path(tmpdir)), \
-             patch("src.core.config.CONFIG_FILE", config_file):
+        with patch("core.config.CONFIG_DIR", Path(tmpdir)), \
+             patch("core.config.CONFIG_FILE", config_file):
             result = load_config()
             
             assert config_file.exists()
@@ -447,8 +447,8 @@ def test_load_config_repairs_on_load():
         config_file = Path(tmpdir) / "config.toml"
         config_file.write_text(MISSING_UNSTABLE_VAR)
         
-        with patch("src.core.config.CONFIG_DIR", Path(tmpdir)), \
-             patch("src.core.config.CONFIG_FILE", config_file):
+        with patch("core.config.CONFIG_DIR", Path(tmpdir)), \
+             patch("core.config.CONFIG_FILE", config_file):
             result = load_config()
             
             # Missing key repaired
@@ -467,8 +467,8 @@ def test_mark_setup_complete():
         config_file = Path(tmpdir) / "config.toml"
         config_file.write_text(VALID_WITH_PKGS.replace("setup_done = true", "setup_done = false"))
         
-        with patch("src.core.config.CONFIG_DIR", Path(tmpdir)), \
-             patch("src.core.config.CONFIG_FILE", config_file):
+        with patch("core.config.CONFIG_DIR", Path(tmpdir)), \
+             patch("core.config.CONFIG_FILE", config_file):
             mark_setup_complete()
             
             content = config_file.read_text()
@@ -482,8 +482,8 @@ def test_is_setup_done():
     with tempfile.TemporaryDirectory() as tmpdir:
         config_file = Path(tmpdir) / "config.toml"
         
-        with patch("src.core.config.CONFIG_DIR", Path(tmpdir)), \
-             patch("src.core.config.CONFIG_FILE", config_file):
+        with patch("core.config.CONFIG_DIR", Path(tmpdir)), \
+             patch("core.config.CONFIG_FILE", config_file):
             # Missing file
             assert not is_setup_done()
             

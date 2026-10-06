@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from src.core.writer import (
+from core.writer import (
     add_package, remove_package, is_package_exists, detect_format,
     add_package_with_pkgs, add_package_explicit_pkgs,
     add_flake_package,
@@ -222,7 +222,7 @@ for fn_name, fn, extra in [
 # ── overlay reference namespace (claude-desktop-nix regression) ────────────
 print("\n[11] add_flake_overlay — inputs. namespace (both insertion paths)")
 
-from src.core.writer import add_flake_overlay, remove_flake_reference
+from core.writer import add_flake_overlay, remove_flake_reference
 
 OVERLAY_EXISTING = '''{ config, pkgs, inputs, ... }:
 {

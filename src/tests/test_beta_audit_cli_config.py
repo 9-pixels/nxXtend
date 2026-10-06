@@ -14,7 +14,7 @@ from contextlib import redirect_stdout, redirect_stderr
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
 import main as m
-from src.core.target import Target
+from core.target import Target
 
 PASS, FAIL = [], []
 def check(name, cond, detail=""):
@@ -122,7 +122,7 @@ check("A16 setup with extra arg → exit 2", code == 2, f"exit={code}")
 print("\n[B] config validate_and_repair — sandboxed")
 
 import toml
-from src.core import config as cfg
+from core import config as cfg
 
 def sandbox_config(td, content=None, env=None):
     """Point CONFIG_FILE at a sandbox; returns (orig_file, orig_dir)."""
@@ -226,7 +226,7 @@ check("B5 CONFIG_DIR derives from SUDO_USER when set",
 # ── [C] Rollback safety ────────────────────────────────────────────────────
 print("\n[C] rollback / backup safety (sandboxed files)")
 
-from src.core.writer import backup_files, restore_files
+from core.writer import backup_files, restore_files
 
 with tempfile.TemporaryDirectory() as td:
     f1 = Path(td) / "a.nix"; f1.write_text("A-content")
@@ -254,7 +254,7 @@ with tempfile.TemporaryDirectory() as td:
     # default backup dir is /etc/nixos/.nx-backup — CANNOT test without touching /etc;
     # verify the default path constant instead
     import inspect
-    from src.core import writer as w
+    from core import writer as w
     src = inspect.getsource(w.backup_files)
     check("C3 default backup dir hardcoded to /etc/nixos/.nx-backup",
           "/etc/nixos/.nx-backup" in src, "informational — sandboxed runs use explicit dir")

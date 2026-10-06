@@ -8,7 +8,7 @@ from contextlib import redirect_stdout
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from src.core.target import (
+from core.target import (
     Target, TargetInfo, select_target, resolve_target_info, require_home_manager,
     SYSTEM_BLOCK, HOME_BLOCK,
 )
@@ -197,8 +197,8 @@ with tempfile.TemporaryDirectory() as td:
 # ── executor conflation regression ────────────────────────────────────────
 print("\n[8] executor: flake_enabled alone decides flake workflow")
 
-from src.flakes.executor import execute
-from src.flakes.models import FlakeSource, FlakeOutput, InstallationPlan
+from flakes.executor import execute
+from flakes.models import FlakeSource, FlakeOutput, InstallationPlan
 
 plan = InstallationPlan(
     source=FlakeSource(url="github:x/y"),
@@ -212,10 +212,10 @@ with tempfile.TemporaryDirectory() as td:
     config = make_config(td, home_enabled=True, flake_enabled=False)
     conf = Path(td) / "configuration.nix"
     conf.write_text('{ pkgs, ... }:\n{\n  environment.systemPackages = with pkgs; [ git ];\n}\n')
-    with patch("src.flakes.executor.subprocess.run") as mock_run:
+    with patch("flakes.executor.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0)
-        with patch("src.flakes.executor.backup_files"):
-            with patch("src.flakes.executor.add_flake") as mock_add_flake:
+        with patch("flakes.executor.backup_files"):
+            with patch("flakes.executor.add_flake") as mock_add_flake:
                 result = execute(plan, config)
                 mock_add_flake.assert_not_called()
     check("executor: HM-on/flakes-off does NOT call add_flake", True)

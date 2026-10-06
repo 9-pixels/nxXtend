@@ -12,13 +12,13 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from src.flakes.discovery import discover, classify
-from src.flakes.resolver import parse_flake_url
-from src.flakes.models import FlakeOutput
-from src.core.writer import add_flake, remove_flake, remove_flake_reference, add_flake_overlay
-from src.core.target import Target
-from src.flakes.executor import execute
-from src.flakes.models import FlakeSource, InstallationPlan
+from flakes.discovery import discover, classify
+from flakes.resolver import parse_flake_url
+from flakes.models import FlakeOutput
+from core.writer import add_flake, remove_flake, remove_flake_reference, add_flake_overlay
+from core.target import Target
+from flakes.executor import execute
+from flakes.models import FlakeSource, InstallationPlan
 
 PASS, FAIL = [], []
 def check(name, cond, detail=""):
@@ -28,7 +28,7 @@ def check(name, cond, detail=""):
 
 def fake_discover(json_payload, system="x86_64-linux"):
     """Run discover() with mocked nix commands."""
-    with patch("src.flakes.discovery.subprocess.run") as mock_run:
+    with patch("flakes.discovery.subprocess.run") as mock_run:
         def side_effect(cmd, **kw):
             m = MagicMock()
             if "show" in cmd:
@@ -73,7 +73,7 @@ check("A7 empty system dict + overlay present → overlay only",
       len(out) == 1 and out[0].type == "overlays")
 
 # A8: malformed JSON from nix
-with patch("src.flakes.discovery.subprocess.run") as mr:
+with patch("flakes.discovery.subprocess.run") as mr:
     m = MagicMock(); m.returncode = 0; m.stdout = "{invalid json"
     mr.return_value = m
     try:
@@ -84,7 +84,7 @@ with patch("src.flakes.discovery.subprocess.run") as mr:
               "json.JSONDecodeError propagates uncaught to caller")
 
 # A9: nix failure (non-zero)
-with patch("src.flakes.discovery.subprocess.run") as mr:
+with patch("flakes.discovery.subprocess.run") as mr:
     m = MagicMock(); m.returncode = 1; m.stdout = ""
     mr.return_value = m
     out = discover(FlakeSource(url="github:x/y"))
@@ -172,9 +172,9 @@ def setup_env(td, sys_text=None, home_text=None, flake_text=FLAKE):
         Path(td, "home.nix").write_text(home_text)
 
 def run_exec(td, plan, config, target=None):
-    with patch("src.flakes.executor.subprocess.run") as mr, \
-         patch("src.flakes.executor.backup_files"), \
-         patch("src.flakes.executor.restore_files"):
+    with patch("flakes.executor.subprocess.run") as mr, \
+         patch("flakes.executor.backup_files"), \
+         patch("flakes.executor.restore_files"):
         mr.return_value = MagicMock(returncode=0)
         ok = execute(plan, config, target=target)
         rebuild_cmd = mr.call_args[0][0] if mr.called else None
@@ -238,8 +238,8 @@ def run_handler_install(url, config, requested=None):
          patch("main.show_rebuild_start"), patch("main.show_rebuild_done"), \
          patch("main.subprocess.run") as mr, \
          patch("main.backup_files"), patch("main.restore_files"), \
-         patch("src.flakes.executor.backup_files"), \
-         patch("src.flakes.executor.restore_files"), \
+         patch("flakes.executor.backup_files"), \
+         patch("flakes.executor.restore_files"), \
          redirect_stdout(io.StringIO()):
         mr.return_value = MagicMock(returncode=0)
         main_mod.handle_flakes_install(url, config, requested=requested)
