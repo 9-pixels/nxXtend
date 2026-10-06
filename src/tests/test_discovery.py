@@ -5,8 +5,8 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from src.flakes.discovery import discover, classify
-from src.flakes.models import FlakeSource, FlakeOutput
+from flakes.discovery import discover, classify
+from flakes.models import FlakeSource, FlakeOutput
 
 # ── Mock data ──────────────────────────────────────────────────────────────────
 
@@ -75,7 +75,7 @@ def fake_run(*args, **kwargs):
 
 def test_devshells_discovered():
     source = FlakeSource(url="github:test/multi-output-flake")
-    with patch("src.flakes.discovery.subprocess.run", side_effect=fake_run):
+    with patch("flakes.discovery.subprocess.run", side_effect=fake_run):
         outputs = discover(source)
     devshells = [o for o in outputs if o.type == "devShells"]
     assert len(devshells) == 2, f"expected 2 devShells, got {len(devshells)}"
@@ -85,7 +85,7 @@ def test_devshells_discovered():
 
 def test_no_wrong_system_leak():
     source = FlakeSource(url="github:test/multi-output-flake")
-    with patch("src.flakes.discovery.subprocess.run", side_effect=fake_run):
+    with patch("flakes.discovery.subprocess.run", side_effect=fake_run):
         outputs = discover(source)
     aarch = [o for o in outputs if o.system == "aarch64-linux"]
     assert len(aarch) == 0, f"aarch64-linux leaked: {[o.name for o in aarch]}"
@@ -93,7 +93,7 @@ def test_no_wrong_system_leak():
 
 def test_default_first_in_each_type():
     source = FlakeSource(url="github:test/multi-output-flake")
-    with patch("src.flakes.discovery.subprocess.run", side_effect=fake_run):
+    with patch("flakes.discovery.subprocess.run", side_effect=fake_run):
         outputs = discover(source)
     from collections import defaultdict
     by_type = defaultdict(list)
@@ -106,7 +106,7 @@ def test_default_first_in_each_type():
 
 def test_order_preserved_for_non_default():
     source = FlakeSource(url="github:test/multi-output-flake")
-    with patch("src.flakes.discovery.subprocess.run", side_effect=fake_run):
+    with patch("flakes.discovery.subprocess.run", side_effect=fake_run):
         outputs = discover(source)
     pkgs = [o.name for o in outputs if o.type == "packages"]
     assert pkgs == ["default", "vim", "git", "curl"], f"order wrong: {pkgs}"
@@ -114,7 +114,7 @@ def test_order_preserved_for_non_default():
 
 def test_non_systemic_types_have_no_system():
     source = FlakeSource(url="github:test/multi-output-flake")
-    with patch("src.flakes.discovery.subprocess.run", side_effect=fake_run):
+    with patch("flakes.discovery.subprocess.run", side_effect=fake_run):
         outputs = discover(source)
     non_systemic_types = {"nixosModules", "homeManagerModules", "overlays"}
     for o in outputs:
@@ -124,7 +124,7 @@ def test_non_systemic_types_have_no_system():
 
 def test_checks_ignored():
     source = FlakeSource(url="github:test/multi-output-flake")
-    with patch("src.flakes.discovery.subprocess.run", side_effect=fake_run):
+    with patch("flakes.discovery.subprocess.run", side_effect=fake_run):
         outputs = discover(source)
     checks = [o for o in outputs if o.type == "checks"]
     assert len(checks) == 0, f"checks not ignored: {checks}"
@@ -132,7 +132,7 @@ def test_checks_ignored():
 
 def test_all_known_types_present():
     source = FlakeSource(url="github:test/multi-output-flake")
-    with patch("src.flakes.discovery.subprocess.run", side_effect=fake_run):
+    with patch("flakes.discovery.subprocess.run", side_effect=fake_run):
         outputs = discover(source)
     types_found = {o.type for o in outputs}
     expected = {"packages", "devShells", "apps", "nixosModules", "homeManagerModules", "overlays"}

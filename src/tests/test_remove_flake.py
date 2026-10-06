@@ -7,7 +7,7 @@ import shutil
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from src.core.writer import (
+from core.writer import (
     remove_flake, add_flake_input, add_flake_to_outputs, add_flake_package,
     backup_files, restore_files,
     remove_flake_reference, is_flake_name_in_content

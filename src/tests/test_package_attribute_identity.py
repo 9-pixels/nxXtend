@@ -18,9 +18,9 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.models.package import Package
-from src.core.manager import deduplicate
-from src.core.writer import (
+from models.package import Package
+from core.manager import deduplicate
+from core.writer import (
     build_package_reference, resolve_identity,
     is_package_exists, is_package_name_taken,
 )

@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from src.flakes.models import FlakeOutput
+from flakes.models import FlakeOutput
 from main import (
     _filter_supported_outputs, handle_flakes_upgrade, handle_install, handle_remove,
     handle_flakes_install, handle_flakes_remove, _check_flakes_enabled, _check_home_manager_enabled,
@@ -282,7 +282,7 @@ def test_flakes_install_rejected_when_flakes_disabled():
 
 def test_flakes_install_rejection_message_mentions_config_path():
     """The rejection message must reference the actual config path from config.py"""
-    from src.core.config import CONFIG_FILE
+    from core.config import CONFIG_FILE
     import io
     from contextlib import redirect_stdout
 

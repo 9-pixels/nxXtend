@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, "/home/ayman/Projects/nix-install")
 
-from src.core.writer import (
+from core.writer import (
     SUPPORTED_FORMATS, detect_format, add_package, remove_package,
     is_package_exists, add_flake_package, add_flake, AddResult,
 )
@@ -182,13 +182,13 @@ for label, content, block, status in [
 
 # no_change — defensive: handler returns identical content
 original = add_package(SYS_WPKGS, "htop", Path("/tmp")).content
-with patch("src.core.writer.add_package_with_pkgs", side_effect=lambda c, p, b: c):
+with patch("core.writer.add_package_with_pkgs", side_effect=lambda c, p, b: c):
     r = add_package(SYS_WPKGS, "htop", Path("/tmp"))
 check("no_change when supported handler returns identical content",
       r.status == "no_change" and r.content == SYS_WPKGS)
 
 # error — handler raises
-with patch("src.core.writer.add_package_with_pkgs", side_effect=RuntimeError("boom")):
+with patch("core.writer.add_package_with_pkgs", side_effect=RuntimeError("boom")):
     r = add_package(SYS_WPKGS, "htop", Path("/tmp"))
 check("error when handler raises (original content preserved)",
       r.status == "error" and r.content == SYS_WPKGS)
@@ -305,9 +305,9 @@ check("nixosModule: status stays success",
 # ══════════════════════════════════════════════════════════════════════════
 print("\n[7] executor gate")
 
-from src.flakes.executor import execute
-from src.flakes.models import FlakeSource, FlakeOutput, InstallationPlan
-from src.core.target import Target
+from flakes.executor import execute
+from flakes.models import FlakeSource, FlakeOutput, InstallationPlan
+from core.target import Target
 
 def make_plan():
     return InstallationPlan(
@@ -323,9 +323,9 @@ with tempfile.TemporaryDirectory() as td:
     cfg = {"setup": {"configuration_path": str(Path(td, "configuration.nix")),
                      "flake_enabled": True, "flake_path": str(Path(td, "flake.nix")),
                      "home_manager_enabled": True, "home_manager_path": str(Path(td, "home.nix"))}}
-    with patch("src.flakes.executor.subprocess.run") as mr, \
-         patch("src.flakes.executor.backup_files") as mb, \
-         patch("src.flakes.executor.restore_files") as mrb:
+    with patch("flakes.executor.subprocess.run") as mr, \
+         patch("flakes.executor.backup_files") as mb, \
+         patch("flakes.executor.restore_files") as mrb:
         mr.return_value = MagicMock(returncode=0)
         ok = execute(make_plan(), cfg, target=Target.HOME)
     check("executor: unsupported home format → False", ok is False)
@@ -411,7 +411,7 @@ print("\n[10] single mutation gateway")
 
 # Flake insertion cannot bypass add_package: patch add_package and prove
 # add_flake_package routes through it (both explicit-block and fallback).
-with patch("src.core.writer.add_package",
+with patch("core.writer.add_package",
            side_effect=lambda c, p, d, b="environment.systemPackages": AddResult(content=c, status="unsupported_unknown")) as mock_add:
     r1 = add_flake_package(HOME_WPKGS, "repo", "default", block=HOME)
     r2 = add_flake_package(SYS_WPKGS, "repo", "default")  # block=None fallback
@@ -434,7 +434,7 @@ for label, content, block in [
 # dispatch — prove it statically: no call to either handler anywhere in
 # production code outside add_package's own body (tests may patch them).
 import inspect as _inspect
-import src.core.writer as _w
+import core.writer as _w
 _wlines = _inspect.getsource(_w).split("\n")
 _wdef = [i for i, l in enumerate(_wlines) if l.startswith("def add_package(")][0]
 _wend = next(i for i in range(_wdef + 1, len(_wlines))

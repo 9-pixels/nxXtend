@@ -1,4 +1,26 @@
-# nx
+<div align="center">
+
+<h1>nx</h1>
+
+[![License](https://img.shields.io/github/license/9-pixels/nxXtend)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-551%20passing-success)](#testing)
+[![Python](https://img.shields.io/badge/Python-3.x-blue?logo=python)](https://www.python.org/)
+[![NixOS](https://img.shields.io/badge/NixOS-supported-5277C3?logo=nixos)](https://nixos.org/)
+
+<p><em>Because you're not ready to type the full name every time.</em></p>
+
+<!-- badges -->
+
+<p>
+  <a href="#features">Features</a> |
+  <a href="#installation">Installation</a> |
+  <a href="#usage">Usage</a> |
+  <a href="#architecture">Architecture</a>
+</p>
+
+</div>
+
+## What is nx(Xtend)
 
 `nx` is an attempt to automate package installation workflows in NixOS while respecting the principles of transparency and information sharing that have long been part of the NixOS community.
 
@@ -17,9 +39,16 @@ There are still parts of the tool that are incomplete, making it inaccurate to c
 ### Flake Management
 
 - Inspect Flakes using `nix flake metadata` and `nix flake show`.
-- Analyze supported Flake outputs and determine how they can be integrated into the system.
-- Install, remove, and upgrade supported Flake configurations.
-- Flake support is still experimental and does not guarantee a stable workflow for every repository. Flakes are highly flexible, but that flexibility also makes their structure and integration considerably more complex.
+- Discover and classify Flake outputs before modifying the system configuration.
+- Install and integrate the currently supported output types:
+    - `packages`
+    - `legacyPackages`
+    - `nixosModules`
+    - `overlays`
+- Detect additional output types such as `apps`, `devShells`, and `homeManagerModules`, but leave unsupported outputs unchanged.
+- Present the selected Flake output and planned changes before modifying system files.
+- Create backups before applying Flake changes and restore them if the resulting system rebuild fails.
+- Flake support is still experimental and does not guarantee a stable workflow for every repository. Flakes can expose different output structures, so support is limited to explicitly handled output types.
 
 ### Configuration & Safety
 
@@ -29,7 +58,90 @@ There are still parts of the tool that are incomplete, making it inaccurate to c
 
 ## Installation
 
-> Installation instructions will be documented as the installation workflow is finalized.
+`nx` can be installed in several ways, depending on how you want to use it.
+
+### Using the installer
+
+The recommended way to install a released version is:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/9-pixels/nxXtend/main/install.sh | bash
+```
+
+The installer downloads the latest release, creates an isolated Python environment, and makes `nx` available through `~/.local/bin`.
+
+Verify the installation with:
+
+```bash
+nx --version
+nx --help
+```
+
+If `~/.local/bin` is not in your `PATH`, add it to your shell environment before using `nx` directly.
+
+### Using Nix
+
+If you already use Nix, `nx` can be built directly from its flake:
+
+```bash
+nix build github:9-pixels/nxXtend
+```
+
+For a local checkout:
+
+```bash
+nix build
+```
+
+The resulting executable is available at:
+
+```text
+./result/bin/nx
+```
+
+### Using Nix Flakes
+
+If your NixOS system is managed with a flake, add `nxXtend` as an input:
+
+```nix
+inputs = {
+  nxXtend = {
+    url = "github:9-pixels/nxXtend";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
+};
+```
+
+Then add the `nx` package to your system configuration:
+
+```nix
+environment.systemPackages = [
+  inputs.nxXtend.packages.${pkgs.stdenv.hostPlatform.system}.default
+];
+```
+
+After rebuilding your system, `nx` will be available as a system package.
+
+This method keeps `nxXtend` managed declaratively alongside the rest of your NixOS configuration.
+
+### From source
+
+For development or contributors, clone the repository and install it from source:
+
+```bash
+git clone https://github.com/9-pixels/nxXtend.git
+cd nxXtend
+
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+Then verify:
+
+```bash
+nx --version
+```
 
 ## Usage
 
@@ -43,21 +155,85 @@ This guides you through the initial configuration of `nx`, including your prefer
 
 The configuration can be changed later by running `nx setup` again, or manually by editing `config.toml`.
 
-Once setup is complete, the main commands are:
+### Commands
+
+| Command                   | Description                                           |
+| ------------------------- | ----------------------------------------------------- |
+| `nx setup`                | Interactive first-time configuration                  |
+| `nx install <package>`    | Install a package from nixpkgs                        |
+| `nx remove <package>`     | Remove a package                                      |
+| `nx upgrade`              | Rebuild and switch to the current NixOS configuration |
+| `nx flakes <url>`         | Install from a Flake URL                              |
+| `nx flakes install <url>` | Explicit Flake install                                |
+| `nx flakes remove <name>` | Remove a Flake                                        |
+| `nx flakes upgrade`       | Upgrade all Flakes                                    |
+| `nx flakes update`        | Synonym for `upgrade`                                 |
+| `nx --version` / `nx -v`  | Show version                                          |
+
+**_(Honestly, I have no idea why I added this command if all it does is rebuild the system, but oh well, haha.)_**
+
+### Short flags
+
+Every command has a short form:
+
+| Short | Long      |
+| ----- | --------- |
+| `-i`  | `install` |
+| `-r`  | `remove`  |
+| `-u`  | `upgrade` |
+| `-f`  | `flakes`  |
+
+Short flags are **composable** — they can appear in any order:
 
 ```bash
-nx install <package>
-nx remove <package>
-nx upgrade
-
-nx flakes <flake-url>
-nx flakes remove <flake-url-or-name>
-nx flakes upgrade
+nx -i firefox              # install firefox
+nx -r firefox              # remove firefox
+nx -u                      # upgrade
+nx -f github:x/y           # flakes install
+nx -f -i github:x/y        # flakes install (explicit)
+nx -f -r myflake           # flakes remove
+nx -f -u                   # flakes upgrade
 ```
 
-These commands cover the main package and Flake workflows currently supported by `nx`.
+### The `-H` flag (Home Manager)
 
-## Architecture
+`-H` targets `home.nix` (`home.packages`) instead of `configuration.nix` (`environment.systemPackages`). It has **three spellings** and can appear **anywhere** among the flags:
+
+```bash
+nx install -H firefox
+nx install --home firefox
+nx install -home firefox
+
+nx -i -H firefox
+nx -H -i firefox
+nx -f -H github:x/y
+nx -H -f github:x/y
+```
+
+**`-H` is rejected** for commands that cannot target Home Manager:
+
+```bash
+nx upgrade -H          # rejected — rebuild is system-wide
+nx flakes upgrade -H   # rejected — rebuild is system-wide
+```
+
+### Global flags
+
+| Flag              | Description  |
+| ----------------- | ------------ |
+| `-h`, `--help`    | Show help    |
+| `--version`, `-v` | Show version |
+
+### Exit codes
+
+| Code | Meaning                                      |
+| ---- | -------------------------------------------- |
+| `0`  | Success, help, or version display            |
+| `1`  | Operation rejected (e.g. `-H` on `upgrade`)  |
+| `2`  | Invalid command or missing required argument |
+
+<details>
+<summary><h2>Architecture</h2></summary>
 
 `nx` is organized into several components with separate responsibilities. The project is designed to keep user interaction, package discovery, Flake processing, configuration management, and Nix file modification separated rather than placing all logic in the CLI entry point.
 
@@ -75,6 +251,8 @@ main.py
  │     │       ├── api.stable
  │     │       └── api.unstable
  │     │
+ │     ├── core.target
+ │     │
  │     ├── ui.display
  │     │
  │     └── core.writer
@@ -84,11 +262,14 @@ main.py
        ├── flakes.resolver
        ├── flakes.discovery
        ├── flakes.planner
+       ├── core.target
        ├── ui.display
        └── flakes.executor
                 │
                 └── core.writer
 ```
+
+Both workflows share `core.writer` and `ui.display`. The `core.target` module is used by both to resolve whether an operation targets `configuration.nix` (SYSTEM) or `home.nix` (HOME).
 
 ### Core components
 
@@ -100,11 +281,11 @@ It handles CLI commands and coordinates the high-level workflows. It does not di
 
 #### `src/api/`
 
-Provides access to package information from nixpkgs sources.
+Provides access to package information from nixpkgs sources via the search.nixos.org Elasticsearch backend.
 
 - `stable.py` handles stable package searches.
 - `unstable.py` handles unstable package searches.
-- `api_config.py` provides API configuration.
+- `api_config.py` defines the Elasticsearch endpoint URLs and shared public credentials (same ones used by `nh` and other Nix tools).
 
 The API layer is concerned with retrieving package information, not modifying the user's NixOS configuration.
 
@@ -114,6 +295,7 @@ Contains functionality shared by the main system workflows.
 
 - `config.py` manages `nx` configuration.
 - `manager.py` coordinates package searches across stable and unstable sources.
+- `target.py` resolves whether an operation targets `configuration.nix` (SYSTEM) or `home.nix` (HOME). It separates **where** a package is placed from **where** it comes from (nixpkgs vs Flake). Pure function — no I/O, no config mutation.
 - `writer.py` performs the actual modification of Nix configuration files and provides backup and restoration functionality.
 
 The writer is intentionally kept separate from decision-making logic: it knows how to modify configuration files, while higher-level components decide what should be changed.
@@ -138,13 +320,15 @@ Writer
 - **Discovery** inspects the Flake and identifies usable outputs.
 - **Planner** converts discovered outputs into actions.
 - **Executor** performs those actions and coordinates the transaction, including backup, rebuild, and rollback.
-- **Models** contains the data structures used by the Flake workflow.
+- **Models** (`src/flakes/models.py`) defines the data structures used by the Flake workflow: `FlakeSource` (URL, revision, target), `FlakeOutput` (name, type, system, attribute), and `InstallationPlan` (source, output, action, system, flake_name).
 
 This pipeline is specific to Flake processing and should not be interpreted as the complete architecture of `nx`.
 
 #### `src/models/`
 
-Contains shared data models used by the application, such as the package model.
+Contains shared data models used by the application.
+
+- `package.py` defines the `Package` dataclass. It carries two distinct identities: `name` (upstream `package_pname`, display/metadata only) and `attribute` (canonical `package_attr_name`, used for every Nix reference, duplicate check, and collision check). These are frequently equal but never interchangeable — `pkgs.nx` and `pkgs.nxXtend` are different packages.
 
 #### `src/ui/`
 
@@ -173,7 +357,10 @@ Some Flake output types are also only partially implemented. For example, planni
 
 These limitations are part of the current development state and may be addressed as the project moves toward `v1.0`.
 
-## Flakes
+</details>
+
+<details>
+<summary><h2>Flakes</h2></summary>
 
 `nx` provides an experimental workflow for inspecting and integrating Flakes into a NixOS configuration.
 
@@ -242,7 +429,10 @@ For this reason, successful discovery of a Flake does not guarantee that every o
 
 The goal of the current implementation is not to hide the complexity of Flakes, but to make the parts that `nx` understands easier to inspect, select, and integrate while preserving the user's existing configuration.
 
-## Backup & Rollback
+</details>
+
+<details>
+<summary><h2>Backup & Rollback</h2></summary>
 
 Before modifying system configuration files, `nx` creates backups under:
 
@@ -258,7 +448,10 @@ The mechanism is intended to provide a safety boundary around automatic modifica
 
 Automatic rollback can also mean that a failed configuration is not left in place for debugging. This is a deliberate trade-off in the current design: the priority is to avoid leaving the system configuration in the state produced by a failed operation.
 
-## Configuration
+</details>
+
+<details>
+<summary><h2>Configuration</h2></summary>
 
 `nx` stores its configuration in:
 
@@ -330,30 +523,129 @@ This allows manually edited configuration files to remain usable without replaci
 
 The configuration template also contains sections reserved for future features. These sections are currently informational and are not used by the running workflows.
 
-## Testing
+</details>
+
+<details>
+<summary><h2>Testing</h2></summary>
 
 `nx` currently has a test suite covering its core components and workflows.
 
+### Running the tests
+
+The suite is a mix of two styles and needs **both** the repository root and `src/`
+on `PYTHONPATH`:
+
+```bash
+cd /path/to/nxXtend
+export PYTHONPATH="$PWD:$PWD/src"
+```
+
+Both entries are required because the tree mixes two import styles — test files
+import `from src.core.writer import ...` (needs the repo root) while the modules
+themselves import `from core.writer import ...` and `from flakes.models import ...`
+(needs `src/`). With only one of them you get `ModuleNotFoundError` before a
+single assertion runs.
+
+`pytest` is not a declared dependency. Install it into your environment first:
+
+```bash
+pip install pytest
+```
+
+**Files that use `pytest`** (function-style, collected normally):
+
+```bash
+python -m pytest src/tests/test_backup_restore.py src/tests/test_config.py \
+                 src/tests/test_discovery.py src/tests/test_executor.py \
+                 src/tests/test_main.py src/tests/test_nixos_modules_scoping.py \
+                 src/tests/test_package_attribute_identity.py \
+                 src/tests/test_package_identity.py src/tests/test_planner.py \
+                 src/tests/test_remove_flake.py src/tests/test_resolver.py
+```
+
+**Files that are standalone harnesses** (they call `sys.exit()` at the bottom, so
+`pytest` aborts collection with `INTERNALERROR`). Run each one directly and read
+its `RESULTS:` line:
+
+```bash
+for f in test_writer_formats test_writer_targets test_beta_audit_writer \
+         test_beta_audit_flakes test_beta_audit_cli_config test_target \
+         test_cli_shorts test_flakes_remove_target; do
+    python "src/tests/$f.py"
+done
+```
+
+Because of this split, running the whole `src/tests/` directory in a single
+`pytest` call aborts on the first harness file. Pass explicit paths, and classify
+a file before adding it to a batch run:
+
+```bash
+grep -q '^sys.exit' src/tests/test_<name>.py && echo harness || echo pytest
+```
+
 ### Test Suite
 
-The current test suite contains **76 tests across 8 test files**:
+The suite contains **19 test files**. The two styles are counted in **different
+units** — a `pytest` run reports test _functions_, while a harness reports
+`check()` _assertions_ — so they are listed in separate tables and must not be
+added together.
 
-| Test file                | Tests | Component                                 |
-| ------------------------ | ----: | ----------------------------------------- |
-| `test_resolver.py`       |     5 | Resolver and metadata handling            |
-| `test_discovery.py`      |     8 | Flake output discovery and classification |
-| `test_planner.py`        |     8 | Action planning                           |
-| `test_executor.py`       |     9 | Flake execution workflows                 |
-| `test_remove_flake.py`   |    15 | Flake removal, backup, and rollback       |
-| `test_backup_restore.py` |     4 | Backup and restore operations             |
-| `test_config.py`         |    12 | Configuration validation and repair       |
-| `test_main.py`           |    15 | CLI workflows and package operations      |
+**pytest-style files — 178 test functions total.** These are what
+`python -m pytest` collects and reports.
 
-Current result:
+| Test file                            | Test functions | Component                                       |
+| ------------------------------------ | -------------: | ----------------------------------------------- |
+| `test_package_identity.py`           |             32 | Package identity, duplicate/collision detection |
+| `test_package_attribute_identity.py` |             28 | `package_attr_name` vs `package_pname` identity |
+| `test_main.py`                       |             24 | CLI workflows and package operations            |
+| `test_nixos_modules_scoping.py`      |             22 | Scoped `nixosModules` insertion                 |
+| `test_executor.py`                   |             20 | Flake execution workflows                       |
+| `test_remove_flake.py`               |             15 | Flake removal, backup, and rollback             |
+| `test_config.py`                     |             12 | Configuration validation and repair             |
+| `test_discovery.py`                  |              8 | Flake output discovery and classification       |
+| `test_planner.py`                    |              8 | Action planning                                 |
+| `test_resolver.py`                   |              5 | Resolver and metadata handling                  |
+| `test_backup_restore.py`             |              4 | Backup and restore operations                   |
+| **Total**                            |        **178** |                                                 |
 
-```text
-76 passed, 0 failed
-```
+**harness-style files — 377 `check()` assertions total.** Each file prints its own
+`RESULTS: N passed, M failed` line.
+
+| Test file                       | Assertions | Component                                   |
+| ------------------------------- | ---------: | ------------------------------------------- |
+| `test_writer_formats.py`        |        101 | Writer format contract and mutation gateway |
+| `test_writer_targets.py`        |         86 | Writer target routing and list insertion    |
+| `test_cli_shorts.py`            |         41 | Short-flag composition and dispatch wiring  |
+| `test_flakes_remove_target.py`  |         28 | Target-aware Flake removal                  |
+| `test_beta_audit_flakes.py`     |         36 | Flake audit findings                        |
+| `test_beta_audit_cli_config.py` |         26 | CLI and config audit findings               |
+| `test_target.py`                |         38 | SYSTEM/HOME target selection                |
+| `test_beta_audit_writer.py`     |         21 | Writer audit findings                       |
+| **Total**                       |    **377** |                                             |
+
+The `test_beta_audit_*.py` files are audit harnesses: a failing check is a
+**recorded finding**, not a broken test, so they exit 0 while documenting known
+issues.
+
+Across both styles: **551 passing, 4 failing**.
+
+### Known failing tests
+
+All 4 remaining failures are **recorded audit findings** in `test_beta_audit_flakes.py`
+(3) and `test_beta_audit_cli_config.py` (1). They document known issues in the
+error-handling paths and are intentional — the harness exits 0 while reporting them.
+
+| Test file                       | Failing | Cause                                    |
+| ------------------------------- | ------: | ---------------------------------------- |
+| `test_beta_audit_flakes.py`     |       3 | Malformed JSON, duplicate input, rebuild |
+| `test_beta_audit_cli_config.py` |       1 | Custom keys dropped during config repair |
+
+**Previously fixed:** The `-H` routing failures (18 across `test_cli_shorts` and
+`test_flakes_remove_target`) and the crashes in `test_target.py` and
+`test_beta_audit_flakes.py` were caused by test files importing `Target` via
+`from src.core.target import` while the application uses `from core.target import`.
+Python loaded the same file twice under two module names, creating two distinct
+`Target` classes. Aligning the import paths fixed all of them.
 
 ### Integration Testing
 
@@ -417,6 +709,8 @@ There are currently no dedicated automated tests for:
 The automated tests mock system-level operations such as subprocess execution and file copying. As a result, they verify how `nx` responds to those operations rather than validating every behavior of the underlying NixOS environment.
 
 Real-system testing therefore remains an important part of validating `nx`, especially for workflows involving Nix, Flakes, system rebuilds, and filesystem changes.
+
+</details>
 
 ## Roadmap
 

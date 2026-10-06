@@ -2,8 +2,8 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from src.flakes.planner import build_plan
-from src.flakes.models import FlakeSource, FlakeOutput
+from flakes.planner import build_plan
+from flakes.models import FlakeSource, FlakeOutput
 
 
 def test_packages_install():

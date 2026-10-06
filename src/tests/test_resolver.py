@@ -5,8 +5,8 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from src.flakes.resolver import get_metadata, parse_flake_url
-from src.flakes.models import FlakeSource
+from flakes.resolver import get_metadata, parse_flake_url
+from flakes.models import FlakeSource
 
 
 def make_mock_run(returncode, stdout):
@@ -25,7 +25,7 @@ def test_metadata_success_with_locked_rev():
     }
     source = FlakeSource(url="github:NixOS/nixpkgs", target=None)
 
-    with patch("src.flakes.resolver.subprocess.run") as mock_run:
+    with patch("flakes.resolver.subprocess.run") as mock_run:
         mock_run.return_value = make_mock_run(0, json.dumps(mock_data))
         result = get_metadata(source)
 
@@ -39,7 +39,7 @@ def test_metadata_locked_is_none():
     mock_data = {"locked": None, "original": {"owner": "test"}}
     source = FlakeSource(url="github:test/no-lock", target=None)
 
-    with patch("src.flakes.resolver.subprocess.run") as mock_run:
+    with patch("flakes.resolver.subprocess.run") as mock_run:
         mock_run.return_value = make_mock_run(0, json.dumps(mock_data))
         result = get_metadata(source)
 
@@ -51,7 +51,7 @@ def test_metadata_command_fails():
     """nix flake metadata command failed"""
     source = FlakeSource(url="github:nonexistent/repo", target="packages.x86_64-linux.foo")
 
-    with patch("src.flakes.resolver.subprocess.run") as mock_run:
+    with patch("flakes.resolver.subprocess.run") as mock_run:
         mock_run.return_value = make_mock_run(1, "")
         result = get_metadata(source)
 
@@ -66,7 +66,7 @@ def test_metadata_preserves_target():
     mock_data = {"locked": {"rev": "xyz789"}}
     source = FlakeSource(url="github:NixOS/nixpkgs", target="packages.x86_64-linux.hello")
 
-    with patch("src.flakes.resolver.subprocess.run") as mock_run:
+    with patch("flakes.resolver.subprocess.run") as mock_run:
         mock_run.return_value = make_mock_run(0, json.dumps(mock_data))
         result = get_metadata(source)
 
@@ -78,7 +78,7 @@ def test_metadata_empty_response():
     """Empty stdout response"""
     source = FlakeSource(url="github:test/repo")
 
-    with patch("src.flakes.resolver.subprocess.run") as mock_run:
+    with patch("flakes.resolver.subprocess.run") as mock_run:
         mock_run.return_value = make_mock_run(0, "")
         result = get_metadata(source)
 

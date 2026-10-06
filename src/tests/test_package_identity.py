@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.core.writer import (
+from core.writer import (
     is_package_exists, is_package_name_taken,
     resolve_identity, resolve_remove_target,
     remove_package, add_package, build_package_reference,

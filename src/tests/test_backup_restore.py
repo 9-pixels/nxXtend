@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from src.core.writer import backup_files, restore_files
+from core.writer import backup_files, restore_files
 
 
 def test_backup_creates_backup_dir():
@@ -17,7 +17,7 @@ def test_backup_creates_backup_dir():
         test_file.write_text("content")
         
         # Mock shutil.copy2 to verify it's called
-        with patch("src.core.writer.shutil.copy2") as mock_copy:
+        with patch("core.writer.shutil.copy2") as mock_copy:
             backup_files([test_file])
             mock_copy.assert_called_once()
             # Verify the source is our file
@@ -42,7 +42,7 @@ def test_restore_from_backup():
         assert test_file.read_text() == "modified content"
         
         # Mock the backup_dir to point to our temp dir
-        with patch("src.core.writer.Path") as mock_path:
+        with patch("core.writer.Path") as mock_path:
             mock_path.return_value = fake_backup_dir
             mock_path.side_effect = lambda x: fake_backup_dir if x == "/etc/nixos/.nx-backup" else Path(x)
             restore_files([test_file])
@@ -56,7 +56,7 @@ def test_backup_with_missing_file():
     with tempfile.TemporaryDirectory() as tmpdir:
         missing_file = Path(tmpdir) / "nonexistent.nix"
         
-        with patch("src.core.writer.shutil.copy2") as mock_copy:
+        with patch("core.writer.shutil.copy2") as mock_copy:
             backup_files([missing_file])
             mock_copy.assert_not_called()
 
@@ -68,7 +68,7 @@ def test_restore_with_missing_backup():
         test_file.write_text("content")
         
         # If backup doesn't exist, copy2 should not be called
-        with patch("src.core.writer.shutil.copy2") as mock_copy:
+        with patch("core.writer.shutil.copy2") as mock_copy:
             # Patch Path to simulate missing backup
             original_path = Path
             def patched_path(p):
@@ -78,7 +78,7 @@ def test_restore_with_missing_backup():
                     return original_path(tmpdir) / ".nx-backup-nonexistent"
                 return result
             
-            with patch("src.core.writer.Path", side_effect=patched_path):
+            with patch("core.writer.Path", side_effect=patched_path):
                 restore_files([test_file])
                 mock_copy.assert_not_called()
 

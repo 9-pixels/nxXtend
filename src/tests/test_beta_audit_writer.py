@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from src.core.writer import (
+from core.writer import (
     add_package, remove_package, is_package_exists, detect_format,
     add_package_with_pkgs,
 )

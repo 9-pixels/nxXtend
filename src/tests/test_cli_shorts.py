@@ -19,7 +19,7 @@ from contextlib import redirect_stdout, redirect_stderr
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
 import main as m
-from src.core.target import Target
+from core.target import Target
 
 PASS, FAIL = [], []
 def check(name, cond, detail=""):

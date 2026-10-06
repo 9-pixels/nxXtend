@@ -7,9 +7,9 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from src.flakes.executor import execute
-from src.flakes.models import FlakeSource, FlakeOutput, InstallationPlan
-from src.core.target import Target
+from flakes.executor import execute
+from flakes.models import FlakeSource, FlakeOutput, InstallationPlan
+from core.target import Target
 
 
 def make_plan(action, pkg_type="packages", name="test-pkg"):
@@ -39,7 +39,7 @@ def make_config(tmpdir, flake_enabled=False, home_manager_enabled=False):
 def test_unsupported_returns_false_without_rebuild():
     plan = make_plan("unsupported")
     config = {"setup": {"flake_enabled": False}}
-    with patch("src.flakes.executor.subprocess.run") as mock_run:
+    with patch("flakes.executor.subprocess.run") as mock_run:
         result = execute(plan, config)
     assert result is False
     mock_run.assert_not_called()
@@ -48,7 +48,7 @@ def test_unsupported_returns_false_without_rebuild():
 def test_configure_home_returns_false_without_rebuild():
     plan = make_plan("configure_home", pkg_type="homeManagerModules", name="my-mod")
     config = {"setup": {"flake_enabled": False}}
-    with patch("src.flakes.executor.subprocess.run") as mock_run:
+    with patch("flakes.executor.subprocess.run") as mock_run:
         result = execute(plan, config)
     assert result is False
     mock_run.assert_not_called()
@@ -68,8 +68,8 @@ def test_install_works_with_flakes_disabled():
         config_nix = Path(tmpdir) / "configuration.nix"
         config_nix.write_text('{\n  environment.systemPackages = with pkgs; [\n    git\n  ];\n}')
         config = make_config(tmpdir, flake_enabled=False)
-        with patch("src.flakes.executor.subprocess.run") as mock_run:
-            with patch("src.flakes.executor.backup_files"):
+        with patch("flakes.executor.subprocess.run") as mock_run:
+            with patch("flakes.executor.backup_files"):
                 mock_run.return_value = MagicMock(returncode=0)
                 result = execute(plan, config)
         assert result is True
@@ -83,9 +83,9 @@ def test_install_works_with_flakes_enabled():
         config_nix = Path(tmpdir) / "configuration.nix"
         config_nix.write_text('{\n  environment.systemPackages = with pkgs; [\n    git\n  ];\n}')
         config = make_config(tmpdir, flake_enabled=True)
-        with patch("src.flakes.executor.subprocess.run") as mock_run:
-            with patch("src.flakes.executor.backup_files"):
-                with patch("src.flakes.executor.restore_files"):
+        with patch("flakes.executor.subprocess.run") as mock_run:
+            with patch("flakes.executor.backup_files"):
+                with patch("flakes.executor.restore_files"):
                     mock_run.return_value = MagicMock(returncode=0)
                     result = execute(plan, config)
         assert result is True
@@ -101,9 +101,9 @@ def test_flake_install_unsupported_format_rolls_back_no_rebuild():
         # empty block — unsupported
         config_nix.write_text('{ \n  environment.systemPackages = [ ]; \n}')
         config = make_config(tmpdir, flake_enabled=True)
-        with patch("src.flakes.executor.subprocess.run") as mock_run:
-            with patch("src.flakes.executor.backup_files"):
-                with patch("src.flakes.executor.restore_files") as mock_restore:
+        with patch("flakes.executor.subprocess.run") as mock_run:
+            with patch("flakes.executor.backup_files"):
+                with patch("flakes.executor.restore_files") as mock_restore:
                     mock_run.return_value = MagicMock(returncode=0)
                     result = execute(plan, config)
         assert result is False, "must not succeed on unsupported format"
@@ -120,9 +120,9 @@ def test_install_works_with_home_manager_enabled():
         # Supported format — the test's purpose is HM routing, not format handling
         home_nix.write_text('{\n  home.packages = with pkgs; [\n    git\n  ];\n}')
         config = make_config(tmpdir, flake_enabled=True, home_manager_enabled=True)
-        with patch("src.flakes.executor.subprocess.run") as mock_run:
-            with patch("src.flakes.executor.backup_files"):
-                with patch("src.flakes.executor.restore_files"):
+        with patch("flakes.executor.subprocess.run") as mock_run:
+            with patch("flakes.executor.backup_files"):
+                with patch("flakes.executor.restore_files"):
                     mock_run.return_value = MagicMock(returncode=0)
                     result = execute(plan, config)
         assert result is True
@@ -136,9 +136,9 @@ def test_configure_nixos_module():
         config_nix = Path(tmpdir) / "configuration.nix"
         config_nix.write_text('{\n  environment.systemPackages = with pkgs; [\n    git\n  ];\n}')
         config = make_config(tmpdir, flake_enabled=True)
-        with patch("src.flakes.executor.subprocess.run") as mock_run:
-            with patch("src.flakes.executor.backup_files"):
-                with patch("src.flakes.executor.restore_files"):
+        with patch("flakes.executor.subprocess.run") as mock_run:
+            with patch("flakes.executor.backup_files"):
+                with patch("flakes.executor.restore_files"):
                     mock_run.return_value = MagicMock(returncode=0)
                     result = execute(plan, config)
         assert result is True
@@ -152,9 +152,9 @@ def test_overlay():
         config_nix = Path(tmpdir) / "configuration.nix"
         config_nix.write_text('{\n  nixpkgs.overlays = [];\n}')
         config = make_config(tmpdir, flake_enabled=True)
-        with patch("src.flakes.executor.subprocess.run") as mock_run:
-            with patch("src.flakes.executor.backup_files"):
-                with patch("src.flakes.executor.restore_files"):
+        with patch("flakes.executor.subprocess.run") as mock_run:
+            with patch("flakes.executor.backup_files"):
+                with patch("flakes.executor.restore_files"):
                     mock_run.return_value = MagicMock(returncode=0)
                     result = execute(plan, config)
         assert result is True
@@ -171,9 +171,9 @@ def test_flake_path_from_config():
         config_nix.write_text('{\n  environment.systemPackages = with pkgs; [\n    git\n  ];\n}')
         config = make_config(tmpdir, flake_enabled=True)
         config["setup"]["flake_path"] = str(flake)
-        with patch("src.flakes.executor.subprocess.run") as mock_run:
-            with patch("src.flakes.executor.backup_files"):
-                with patch("src.flakes.executor.restore_files"):
+        with patch("flakes.executor.subprocess.run") as mock_run:
+            with patch("flakes.executor.backup_files"):
+                with patch("flakes.executor.restore_files"):
                     mock_run.return_value = MagicMock(returncode=0)
                     result = execute(plan, config)
         assert result is True
@@ -198,9 +198,9 @@ def _run_install(tmpdir, target=None, home_manager_enabled=False,
     config = make_config(tmpdir, flake_enabled=True,
                          home_manager_enabled=home_manager_enabled)
     plan = make_plan("install", pkg_type="packages", name="vim")
-    with patch("src.flakes.executor.subprocess.run") as mock_run:
-        with patch("src.flakes.executor.backup_files"):
-            with patch("src.flakes.executor.restore_files"):
+    with patch("flakes.executor.subprocess.run") as mock_run:
+        with patch("flakes.executor.backup_files"):
+            with patch("flakes.executor.restore_files"):
                 mock_run.return_value = MagicMock(returncode=0)
                 result = execute(plan, config, target=target)
     sys_out = (Path(tmpdir) / "configuration.nix").read_text() if (Path(tmpdir) / "configuration.nix").exists() else ""
