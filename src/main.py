@@ -483,6 +483,11 @@ def handle_flakes_upgrade(config: dict):
 SUBCOMMANDS = {"setup", "install", "remove", "upgrade", "flakes"}
 SHORT_OPS = {"-i": "install", "-r": "remove", "-u": "upgrade"}
 HOME_FLAGS = {"-H", "--home", "-home"}
+FLAKE_URL_PREFIXES = (
+    "github:", "gitlab:", "sourcehut:",
+    "git+", "hg+", "tarball+", "file+",
+    "http://", "https://",
+)
 
 
 def _usage_error(message: str):
@@ -630,7 +635,7 @@ def main():
             _reject_home_target_unsupported("nx upgrade")
         handle_upgrade(config)
     elif args.command == "flakes":
-        if args.action_or_url and args.action_or_url.startswith("github:"):
+        if args.action_or_url and args.action_or_url.startswith(FLAKE_URL_PREFIXES):
             handle_flakes_install(args.action_or_url, config, requested=home_target)
         elif args.action_or_url == "remove" and args.name:
             handle_flakes_remove(args.name, config, requested=home_target)
@@ -642,6 +647,8 @@ def main():
         elif args.action_or_url == "install" and args.name:
             # Explicit 'flakes install' spelling — same workflow as the URL form.
             handle_flakes_install(args.name, config, requested=home_target)
+        elif args.action_or_url and args.action_or_url not in ("remove", "upgrade", "update", "install"):
+            handle_flakes_install(args.action_or_url, config, requested=home_target)
         else:
             parser.print_help()
 
