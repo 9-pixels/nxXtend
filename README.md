@@ -6,7 +6,7 @@
 [![Tests](https://img.shields.io/badge/tests-551%20passing-success)](#testing)
 [![Python](https://img.shields.io/badge/Python-3.x-blue?logo=python)](https://www.python.org/)
 [![NixOS](https://img.shields.io/badge/NixOS-supported-5277C3?logo=nixos)](https://nixos.org/)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/9-pixels/nxXtend)
+[<img src="https://devin.ai/assets/askdeepwiki.png" alt="Ask DeepWiki" height="20"/>](https://deepwiki.com/9-pixels/nxXtend)
 <p><em>Because you're not ready to type the full name every time.</em></p>
 
 <!-- badges -->
