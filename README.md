@@ -62,7 +62,7 @@ There are still parts of the tool that are incomplete, making it inaccurate to c
 
 ### Using the installer
 
-The recommended way to install a released version is:
+If you are using Nix outside of NixOS and want to use the tool, it is recommended that you: 
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/9-pixels/nxXtend/main/install.sh | bash
