@@ -1,11 +1,8 @@
-import sys
-import os
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import shutil
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
 from core.writer import (
     remove_flake, add_flake_input, add_flake_to_outputs, add_flake_package,
@@ -426,38 +423,3 @@ def test_rollback_when_lock_not_exists_before():
 
             # flake.nix returned to original
             assert flake_file.read_text() == original_flake
-
-
-if __name__ == "__main__":
-    tests = [
-        test_remove_flake_basic,
-        test_remove_flake_from_outputs,
-        test_remove_last_flake,
-        test_remove_flake_not_found,
-        test_round_trip_add_then_remove,
-        test_rollback_on_rebuild_failure,
-        test_rollback_includes_multiple_files,
-        test_remove_flake_reference_basic,
-        test_remove_flake_reference_multiple,
-        test_remove_flake_reference_not_found,
-        test_remove_flake_reference_doesnt_touch_unknown_refs,
-        test_is_flake_name_in_content,
-        test_add_flake_then_remove_reference_round_trip,
-        test_rollback_atomicity_on_write_failure,
-        test_rollback_when_lock_not_exists_before,
-    ]
-    passed = failed = 0
-    for t in tests:
-        try:
-            t()
-            print(f"  ✓ {t.__name__}")
-            passed += 1
-        except AssertionError as e:
-            print(f"  ✗ {t.__name__}: {e}")
-            failed += 1
-        except Exception as e:
-            print(f"  ✗ {t.__name__}: {type(e).__name__}: {e}")
-            failed += 1
-    print(f"\n  {passed} passed, {failed} failed")
-    if failed:
-        sys.exit(1)

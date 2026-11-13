@@ -1,14 +1,11 @@
-import sys
-import os
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 
 from core.config import (
-    CONFIG_TEMPLATE, SETUP_DEFAULTS, validate_setup_value, validate_and_repair,
+    validate_setup_value, validate_and_repair,
     create_fresh_config, load_config, is_setup_done, mark_setup_complete,
-    CONFIG_DIR, CONFIG_FILE
 )
 
 
@@ -500,38 +497,3 @@ def test_is_setup_done():
             assert not is_setup_done()
     
     print("  ✓ is_setup_done reads setup_done correctly")
-
-
-if __name__ == "__main__":
-    tests = [
-        test_validate_setup_value,
-        test_create_fresh_config,
-        test_validate_and_repair_preserves_valid_values,
-        test_validate_and_repair_adds_missing_keys,
-        test_validate_and_repair_restores_missing_sections,
-        test_validate_and_repair_handles_corrupted_toml,
-        test_validate_and_repair_missing_setup_done,
-        test_validate_and_repair_invalid_setup_done,
-        test_load_config_creates_fresh_if_missing,
-        test_load_config_repairs_on_load,
-        test_mark_setup_complete,
-        test_is_setup_done,
-    ]
-    
-    passed = 0
-    failed = 0
-    
-    for test in tests:
-        try:
-            test()
-            passed += 1
-        except AssertionError as e:
-            print(f"  ✗ {test.__name__}: {e}")
-            failed += 1
-        except Exception as e:
-            print(f"  ✗ {test.__name__}: {type(e).__name__}: {e}")
-            failed += 1
-    
-    print(f"\n  {passed} passed, {failed} failed")
-    if failed:
-        sys.exit(1)

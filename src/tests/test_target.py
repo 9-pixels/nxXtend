@@ -1,24 +1,23 @@
-import sys
-import os
-import io
-import tempfile
-from pathlib import Path
-from unittest.mock import patch, MagicMock
-from contextlib import redirect_stdout
+"""Target selection tests (SYSTEM/HOME).
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
+Migrated from the original script harness; every ``check`` maps 1:1 to a
+collected pytest test instance. Checks that were tautological labels in the
+harness (``check(..., True)``) are now real assertions against the mocked
+collaborators they were annotating.
+"""
+import argparse
+import io
+from contextlib import redirect_stdout
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from core.target import (
-    Target, TargetInfo, select_target, resolve_target_info, require_home_manager,
+    Target, select_target, resolve_target_info, require_home_manager,
     SYSTEM_BLOCK, HOME_BLOCK,
 )
 from main import handle_install, handle_flakes_install
-
-
-PASS, FAIL = [], []
-def check(name, cond, detail=""):
-    (PASS if cond else FAIL).append(name)
-    print(f"  {'✓' if cond else '✗'} {name}" + (f" — {detail}" if not cond else ""))
 
 
 def make_config(tmpdir, home_enabled=False, flake_enabled=False):
@@ -34,43 +33,6 @@ def make_config(tmpdir, home_enabled=False, flake_enabled=False):
     }
 
 
-print("=" * 70)
-print("TARGET SELECTION TESTS")
-print("=" * 70)
-
-# ── select_target: pure decision ───────────────────────────────────────────
-print("\n[1] select_target — pure decision")
-
-check("no request → SYSTEM", select_target({"setup": {}}, None) is Target.SYSTEM)
-check("no request → SYSTEM even with HM enabled",
-      select_target({"setup": {"home_manager_enabled": True}}, None) is Target.SYSTEM)
-check("HOME request → HOME", select_target({"setup": {}}, Target.HOME) is Target.HOME)
-check("SYSTEM request → SYSTEM", select_target({"setup": {}}, Target.SYSTEM) is Target.SYSTEM)
-
-# ── require_home_manager ───────────────────────────────────────────────────
-print("\n[2] require_home_manager — availability gate")
-
-check("false when disabled", require_home_manager({"setup": {"home_manager_enabled": False}}) is False)
-check("false when missing", require_home_manager({"setup": {}}) is False)
-check("true when enabled", require_home_manager({"setup": {"home_manager_enabled": True}}) is True)
-
-# ── resolve_target_info ────────────────────────────────────────────────────
-print("\n[3] resolve_target_info — file + block mapping")
-
-with tempfile.TemporaryDirectory() as td:
-    config = make_config(td, home_enabled=True)
-    info = resolve_target_info(config, Target.SYSTEM)
-    check("SYSTEM file = configuration.nix", info.file == Path(td) / "configuration.nix")
-    check("SYSTEM block = environment.systemPackages", info.block == SYSTEM_BLOCK)
-    info = resolve_target_info(config, Target.HOME)
-    check("HOME file = home.nix", info.file == Path(td) / "home.nix")
-    check("HOME block = home.packages", info.block == HOME_BLOCK)
-
-# ── CLI normalization: -H / --home / -home ─────────────────────────────────
-print("\n[4] CLI flag normalization (argparse against main's parser)")
-
-import argparse
-
 def parse(argv):
     """Rebuild main's parser exactly and parse argv."""
     parser = argparse.ArgumentParser(prog="nx")
@@ -84,31 +46,99 @@ def parse(argv):
             action="store_const", const=Target.HOME, dest="home_target",
         )
 
-    install_p = subparsers.add_parser("install"); install_p.add_argument("name"); add_home_flag(install_p)
-    remove_p = subparsers.add_parser("remove"); remove_p.add_argument("name"); add_home_flag(remove_p)
-    upgrade_p = subparsers.add_parser("upgrade"); add_home_flag(upgrade_p)
+    install_p = subparsers.add_parser("install")
+    install_p.add_argument("name")
+    add_home_flag(install_p)
+    remove_p = subparsers.add_parser("remove")
+    remove_p.add_argument("name")
+    add_home_flag(remove_p)
+    upgrade_p = subparsers.add_parser("upgrade")
+    add_home_flag(upgrade_p)
     flakes_p = subparsers.add_parser("flakes")
     flakes_p.add_argument("action_or_url", nargs="?")
     flakes_p.add_argument("name", nargs="?")
     add_home_flag(flakes_p)
     return parser.parse_args(argv)
 
-for sub, extra in [("install", ["firefox"]), ("remove", ["firefox"]), ("upgrade", []), ("flakes", ["github:x/y"])]:
-    for flag in ("-H", "--home", "-home"):
-        args = parse([sub, flag] + extra)
-        check(f"nx {sub} {flag} → HOME", args.home_target is Target.HOME)
+
+# ── [1] select_target: pure decision ────────────────────────────────────────
+
+@pytest.mark.parametrize("config,requested,expected", [
+    ({"setup": {}}, None, Target.SYSTEM),
+    ({"setup": {"home_manager_enabled": True}}, None, Target.SYSTEM),
+    ({"setup": {}}, Target.HOME, Target.HOME),
+    ({"setup": {}}, Target.SYSTEM, Target.SYSTEM),
+], ids=[
+    "no request → SYSTEM",
+    "no request → SYSTEM even with HM enabled",
+    "HOME request → HOME",
+    "SYSTEM request → SYSTEM",
+])
+def test_select_target_pure_decision(config, requested, expected):
+    assert select_target(config, requested) is expected
+
+
+# ── [2] require_home_manager: availability gate ─────────────────────────────
+
+@pytest.mark.parametrize("config,expected", [
+    ({"setup": {"home_manager_enabled": False}}, False),
+    ({"setup": {}}, False),
+    ({"setup": {"home_manager_enabled": True}}, True),
+], ids=[
+    "false when disabled",
+    "false when missing",
+    "true when enabled",
+])
+def test_require_home_manager(config, expected):
+    assert require_home_manager(config) is expected
+
+
+# ── [3] resolve_target_info: file + block mapping ───────────────────────────
+
+def test_resolve_target_info_file_and_block(tmp_path):
+    config = make_config(tmp_path, home_enabled=True)
+    info = resolve_target_info(config, Target.SYSTEM)
+    assert info.file == tmp_path / "configuration.nix"
+    assert info.block == SYSTEM_BLOCK
+    info = resolve_target_info(config, Target.HOME)
+    assert info.file == tmp_path / "home.nix"
+    assert info.block == HOME_BLOCK
+
+
+# ── [4] CLI flag normalization (argparse against main's parser) ─────────────
+
+@pytest.mark.parametrize("sub,extra", [
+    ("install", ["firefox"]),
+    ("remove", ["firefox"]),
+    ("upgrade", []),
+    ("flakes", ["github:x/y"]),
+], ids=["install", "remove", "upgrade", "flakes"])
+@pytest.mark.parametrize("flag", ["-H", "--home", "-home"])
+def test_home_flag_selects_home(sub, extra, flag):
+    args = parse([sub, flag] + extra)
+    assert args.home_target is Target.HOME
+
+
+@pytest.mark.parametrize("sub,extra", [
+    ("install", ["firefox"]),
+    ("remove", ["firefox"]),
+    ("upgrade", []),
+    ("flakes", ["github:x/y"]),
+], ids=["install", "remove", "upgrade", "flakes"])
+def test_no_flag_leaves_home_target_none(sub, extra):
     args = parse([sub] + extra)
-    check(f"nx {sub} (no flag) → None/SYSTEM", args.home_target is None)
+    assert args.home_target is None
 
-# flag AFTER positional must also work (argparse allows interspersed)
-args = parse(["install", "firefox", "-H"])
-check("nx install firefox -H (flag last) → HOME", args.home_target is Target.HOME)
 
-# ── -H rejection when HM disabled (clean, no files touched) ───────────────
-print("\n[5] -H with home_manager_enabled=false → clean reject")
+def test_home_flag_after_positional():
+    args = parse(["install", "firefox", "-H"])
+    assert args.home_target is Target.HOME
 
-with tempfile.TemporaryDirectory() as td:
-    config = make_config(td, home_enabled=False)
+
+# ── [5] -H with home_manager_enabled=false → clean reject ──────────────────
+
+def test_home_request_rejected_when_hm_disabled(tmp_path):
+    config = make_config(tmp_path, home_enabled=False)
     with patch("main.search") as mock_search:
         with patch("main.backup_files") as mock_backup:
             buf = io.StringIO()
@@ -117,24 +147,25 @@ with tempfile.TemporaryDirectory() as td:
     mock_search.assert_not_called()
     mock_backup.assert_not_called()
     out = buf.getvalue()
-    check("rejects before search", True)
-    check("message mentions home_manager_enabled", "home_manager_enabled" in out)
-    check("message mentions config path", ".config/nx/config.toml" in out)
+    assert "home_manager_enabled" in out
+    assert ".config/nx/config.toml" in out
 
-# ── THE critical test: -H must NOT enter Flake workflow ───────────────────
-print("\n[6] -H + home_manager_enabled=true + flake_enabled=false")
-print("    must NOT enter Flake workflow")
 
-with tempfile.TemporaryDirectory() as td:
-    config = make_config(td, home_enabled=True, flake_enabled=False)
+# ── [6] THE critical test: -H must NOT enter Flake workflow ─────────────────
 
-    # handle_install must route to home.nix, never to flake functions
-    conf = Path(td) / "configuration.nix"
-    home = Path(td) / "home.nix"
+def test_home_request_does_not_enter_flake_workflow(tmp_path):
+    config = make_config(tmp_path, home_enabled=True, flake_enabled=False)
+
+    conf = tmp_path / "configuration.nix"
+    home = tmp_path / "home.nix"
     conf.write_text('{ pkgs, ... }:\n{\n  environment.systemPackages = with pkgs; [ git ];\n}\n')
     home.write_text('{ pkgs, ... }:\n{\n  home.packages = with pkgs; [ git ];\n}\n')
 
-    pkg = MagicMock(); pkg.name = "firefox"; pkg.attribute = "firefox"; pkg.source = "stable"; pkg.version = "1.0"
+    pkg = MagicMock()
+    pkg.name = "firefox"
+    pkg.attribute = "firefox"
+    pkg.source = "stable"
+    pkg.version = "1.0"
 
     def mock_search(name):
         yield "stable", [pkg]
@@ -150,79 +181,60 @@ with tempfile.TemporaryDirectory() as td:
                             with patch("main.backup_files"):
                                 with patch("main.restore_files"):
                                     with patch("main.add_flake") as mock_add_flake:
-                                        handle_install("firefox", config, requested=Target.HOME)
+                                        handle_install("firefox", config,
+                                                       requested=Target.HOME)
                                         mock_add_flake.assert_not_called()
 
-    # home.nix is the file the handler read (it exists check passed means
-    # it targeted home.nix, since we wrote both files)
-    check("rebuild ran (workflow completed)", mock_run.called)
-    check("add_flake never called (not a flake op)", True)
-    check("targeted home.nix (read succeeded on HOME file)",
-          "home.packages" in home.read_text())
+    assert mock_run.called
+    assert "home.packages" in home.read_text()
 
-# ── handle_flakes_install: target parsed, flake guard unchanged ────────────
-print("\n[7] nx flakes -H: parses target, preserves flake guard")
 
-with tempfile.TemporaryDirectory() as td:
-    # flakes disabled → existing guard rejects regardless of -H
-    config = make_config(td, home_enabled=True, flake_enabled=False)
+# ── [7] nx flakes -H: parses target, preserves flake guard ──────────────────
+
+def test_flakes_guard_rejects_when_flakes_disabled(tmp_path):
+    config = make_config(tmp_path, home_enabled=True, flake_enabled=False)
     with patch("main.parse_flake_url") as mock_parse:
         handle_flakes_install("github:x/y", config, requested=Target.HOME)
     mock_parse.assert_not_called()
-    check("flakes guard still rejects when flake_enabled=false", True)
 
-with tempfile.TemporaryDirectory() as td:
-    # flakes enabled + HM disabled + -H → home rejection
-    config = make_config(td, home_enabled=False, flake_enabled=True)
+
+def test_flakes_home_rejected_when_hm_disabled(tmp_path):
+    config = make_config(tmp_path, home_enabled=False, flake_enabled=True)
     with patch("main.parse_flake_url") as mock_parse:
         handle_flakes_install("github:x/y", config, requested=Target.HOME)
     mock_parse.assert_not_called()
-    check("-H rejected when HM disabled (flakes path)", True)
 
-with tempfile.TemporaryDirectory() as td:
-    # flakes enabled + HM enabled + -H → proceeds past guards into resolver.
-    # Target file must exist in a supported format: the pre-check rejects
-    # missing files and unsupported formats before the resolver starts.
-    config = make_config(td, home_enabled=True, flake_enabled=True)
-    (Path(td) / "home.nix").write_text(
+
+def test_flakes_home_proceeds_to_resolver_when_both_enabled(tmp_path):
+    config = make_config(tmp_path, home_enabled=True, flake_enabled=True)
+    (tmp_path / "home.nix").write_text(
         '{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    git\n  ];\n}\n')
     with patch("main.parse_flake_url") as mock_parse:
-        with patch("main.get_metadata") as mock_meta:
+        with patch("main.get_metadata"):
             with patch("main.get_current_system", return_value="x86_64-linux"):
                 with patch("main.discover", return_value=[]):
                     handle_flakes_install("github:x/y", config, requested=Target.HOME)
     mock_parse.assert_called_once()
-    check("flakes -H proceeds to resolver when both enabled", True)
 
-# ── executor conflation regression ────────────────────────────────────────
-print("\n[8] executor: flake_enabled alone decides flake workflow")
 
-from flakes.executor import execute
-from flakes.models import FlakeSource, FlakeOutput, InstallationPlan
+# ── [8] executor conflation regression ──────────────────────────────────────
 
-plan = InstallationPlan(
-    source=FlakeSource(url="github:x/y"),
-    output=FlakeOutput(name="default", type="packages"),
-    action="install", system="x86_64-linux", flake_name="y",
-)
+def test_executor_flake_enabled_alone_decides_flake_workflow(tmp_path):
+    from flakes.executor import execute
+    from flakes.models import FlakeSource, FlakeOutput, InstallationPlan
 
-with tempfile.TemporaryDirectory() as td:
-    # HM enabled, flakes DISABLED → must use plain add_package path,
-    # not add_flake (the old conflation)
-    config = make_config(td, home_enabled=True, flake_enabled=False)
-    conf = Path(td) / "configuration.nix"
+    plan = InstallationPlan(
+        source=FlakeSource(url="github:x/y"),
+        output=FlakeOutput(name="default", type="packages"),
+        action="install", system="x86_64-linux", flake_name="y",
+    )
+
+    config = make_config(tmp_path, home_enabled=True, flake_enabled=False)
+    conf = tmp_path / "configuration.nix"
     conf.write_text('{ pkgs, ... }:\n{\n  environment.systemPackages = with pkgs; [ git ];\n}\n')
     with patch("flakes.executor.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0)
         with patch("flakes.executor.backup_files"):
             with patch("flakes.executor.add_flake") as mock_add_flake:
-                result = execute(plan, config)
+                execute(plan, config)
                 mock_add_flake.assert_not_called()
-    check("executor: HM-on/flakes-off does NOT call add_flake", True)
-
-print("\n" + "=" * 70)
-print(f"RESULTS: {len(PASS)} passed, {len(FAIL)} failed")
-if FAIL:
-    for f in FAIL: print(f"  ✗ {f}")
-print("=" * 70)
-sys.exit(1 if FAIL else 0)

@@ -1,48 +1,36 @@
-"""Writer format contract tests (Beta).
+"""Writer format contract tests.
 
 Covers the full chain: detect_format → SUPPORTED_FORMATS gate →
 add_package result → add_flake_package → executor → main/UI boundary.
 
 Beta contract: only `with_pkgs` and `explicit_pkgs` may be modified.
 empty / missing / external / unknown are detected but never mutated.
+
+Migrated from the original script harness; every ``check`` maps 1:1 to a
+collected pytest test instance.
 """
-import sys
-import tempfile
+import inspect
+import io
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 
+from core.target import Target
 from core.writer import (
-    SUPPORTED_FORMATS, detect_format, add_package, remove_package,
+    detect_format, add_package, remove_package,
     is_package_exists, add_flake_package, add_flake, AddResult,
 )
 
 SYSTEM = "environment.systemPackages"
 HOME = "home.packages"
-PASS, FAIL = [], []
-
-
-def check(label, ok, detail=""):
-    (PASS if ok else FAIL).append(label)
-    print(f"  {'✓' if ok else '✗'} {label}" + (f"  [{detail}]" if not ok and detail else ""))
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# [1] detect_format — full matrix, both blocks
-# ══════════════════════════════════════════════════════════════════════════
-print("\n[1] detect_format matrix")
 
 SYS_WPKGS = '{ pkgs, ... }:\n{\n  environment.systemPackages = with pkgs; [\n    git\n  ];\n}\n'
 HOME_WPKGS = '{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    git\n  ];\n}\n'
 SYS_EXPL = '{ pkgs, ... }:\n{\n  environment.systemPackages = [\n    pkgs.git\n  ];\n}\n'
 HOME_EXPL = '{ pkgs, ... }:\n{\n  home.packages = [\n    pkgs.git\n  ];\n}\n'
 
-check("system with_pkgs", detect_format(SYS_WPKGS) == "with_pkgs")
-check("home with_pkgs", detect_format(HOME_WPKGS, HOME) == "with_pkgs")
-check("system explicit", detect_format(SYS_EXPL) == "explicit_pkgs")
-check("home explicit", detect_format(HOME_EXPL, HOME) == "explicit_pkgs")
-
-# multiline `= \n with pkgs; [` — the two required spellings
 MULTILINE = '''{ pkgs, ... }:
 {
   home.packages =
@@ -52,45 +40,8 @@ MULTILINE = '''{ pkgs, ... }:
     ];
 }
 '''
-check("multiline with pkgs (different line) → with_pkgs",
-      detect_format(MULTILINE, HOME) == "with_pkgs")
 SYS_MULTILINE = MULTILINE.replace("home.packages", "environment.systemPackages")
-check("multiline system with pkgs → with_pkgs",
-      detect_format(SYS_MULTILINE) == "with_pkgs")
 
-# empty — both spellings, both blocks
-check("empty [ ] → empty", detect_format('{\n  home.packages = [ ];\n}', HOME) == "empty")
-check("empty [] → empty", detect_format('{\n  home.packages = [];\n}', HOME) == "empty")
-check("empty with-pkgs form → empty",
-      detect_format('{\n  home.packages = with pkgs; [ ];\n}', HOME) == "empty")
-check("empty newline inside → empty",
-      detect_format('{\n  home.packages = [\n\n  ];\n}', HOME) == "empty")
-
-# missing
-check("missing block → missing", detect_format('{\n  home.username = "u";\n}', HOME) == "missing")
-check("empty file → missing", detect_format("", HOME) == "missing")
-check("comment-only mention → missing",
-      detect_format('{ pkgs, ... }:\n{\n  # home.packages is managed manually\n  home.username = "u";\n}', HOME) == "missing")
-
-# external — both spellings
-check("import ./ → external",
-      detect_format('{\n  environment.systemPackages = import ./pkgs.nix;\n}') == "external")
-check("import ../ → external",
-      detect_format('{\n  environment.systemPackages = import ../sub/pkgs.nix;\n}') == "external")
-
-# unknown — non-list values and bare-name lists
-check("mkMerge → unknown",
-      detect_format('{\n  environment.systemPackages = mkMerge [ git ];\n}') == "unknown")
-check("lib.mkIf → unknown",
-      detect_format('{\n  environment.systemPackages = lib.mkIf true [ git ];\n}') == "unknown")
-check("concat [a] ++ [b] → unknown",
-      detect_format('{\n  environment.systemPackages = [ git ] ++ [ vim ];\n}') == "unknown")
-check("bare names without pkgs. → unknown",
-      detect_format('{\n  environment.systemPackages = [\n    git\n  ];\n}') == "unknown")
-check("unclosed bracket → unknown",
-      detect_format('{\n  environment.systemPackages = with pkgs; [\n    git\n}') == "unknown")
-
-# THE regression: cross-block with pkgs must not leak
 CROSS = '''{ pkgs, ... }:
 {
   home.packages = [
@@ -101,357 +52,409 @@ CROSS = '''{ pkgs, ... }:
   ];
 }
 '''
-check("REGRESSION: plain home + with-pkgs system → home is explicit_pkgs",
-      detect_format(CROSS, HOME) == "explicit_pkgs")
-check("REGRESSION: plain system + with-pkgs home → system is explicit_pkgs",
-      detect_format(CROSS.replace("  home.packages = [\n    pkgs.git\n  ];\n", "  environment.systemPackages = [\n    pkgs.vim\n  ];\n").replace("  environment.systemPackages = with pkgs; [\n    vim\n  ];\n", "  home.packages = with pkgs; [\n    git\n  ];\n")) == "explicit_pkgs")
-check("pkgs. elsewhere in file does not make bare list explicit",
-      detect_format('{\n  home.packages = [\n    git\n  ];\n  programs.vim.package = pkgs.vim;\n}', HOME) == "unknown")
+
+FLAKE_NIX = '{\n  inputs = {\n    nixpkgs.url = "github:NixOS/nixpkgs";\n  };\n  outputs = { nixpkgs, ... }: {\n  };\n}\n'
+
+FLAKE_LINE = "inputs.repo.packages.${pkgs.stdenv.hostPlatform.system}.default"
+
 
 # ══════════════════════════════════════════════════════════════════════════
-# [1b] detect_format scoping — permanent regression tests (audit §2)
-#    Compressed Nix, inline comments, strings, block-name-in-comment/string
-#    traps. Prevents future regex relaxation from reintroducing false positives.
+# [1] detect_format — full matrix, both blocks
 # ══════════════════════════════════════════════════════════════════════════
-print("\n[1b] detect_format scoping (audit §2)")
 
-check("with_pkgs one-line",
-      detect_format('{ pkgs, ... }: { home.packages = with pkgs; [ git vim ]; }', HOME) == "with_pkgs")
-check("with_pkgs extra spaces around pkgs;",
-      detect_format('{ pkgs, ... }: { home.packages = with    pkgs ; [ git ]; }', HOME) == "with_pkgs")
-check("with_pkgs with trailing before",
-      detect_format('{ pkgs, ... }: { home.packages = # hi\n  with pkgs; [ git ]; }', HOME) == "with_pkgs")
-check("explicit one-line",
-      detect_format('{ pkgs, ... }: { home.packages = [ pkgs.git pkgs.vim ]; }', HOME) == "explicit_pkgs")
-check("explicit with inline comment",
-      detect_format('{ pkgs, ... }: { home.packages = [ pkgs.git # c\n ]; }', HOME) == "explicit_pkgs")
-check("explicit ] inside quoted string",
-      detect_format('{ pkgs, ... }: { home.packages = [ (pkgs.foo.override { x = "]"; }) ]; }', HOME) == "explicit_pkgs")
-check("empty list",
-      detect_format('{ pkgs, ... }: { home.packages = [ ]; }', HOME) == "empty")
-check("missing block",
-      detect_format('{ pkgs, ... }: { home.username = "u"; }', HOME) == "missing")
-check("external import",
-      detect_format('{ pkgs, ... }: { environment.systemPackages = import ./p.nix; }', SYSTEM) == "external")
-check("mkMerge → unknown",
-      detect_format('{ pkgs, ... }: { home.packages = mkMerge [ git ]; }', HOME) == "unknown")
-check("lib.mkIf → unknown",
-      detect_format('{ pkgs, ... }: { home.packages = lib.mkIf x [ git ]; }', HOME) == "unknown")
-check("[ a ] ++ [ b ] → unknown",
-      detect_format('{ pkgs, ... }: { home.packages = [ a ] ++ [ b ]; }', HOME) == "unknown")
-check("assignment after = → unknown",
-      detect_format('{ pkgs, ... }: { home.packages =\n  other.option = [ pkgs.foo ]; }', HOME) == "unknown")
-check("[ inside line comment → with_pkgs (skipped)",
-      detect_format('{ pkgs, ... }: { home.packages = with pkgs; [ git # see ]\n ]; }', HOME) == "with_pkgs")
-check("bare identifier value → unknown",
-      detect_format('{ pkgs, ... }: { home.packages = something; }', HOME) == "unknown")
-check("malformed = at EOF → unknown",
-      detect_format('{ pkgs, ... }: { home.packages =', HOME) == "unknown")
-check("block name in comment only → missing",
-      detect_format('{ pkgs, ... }: { # home.packages here\n  foo.bar = [ pkgs.x ]; }', HOME) == "missing")
-check("block name in string only → missing",
-      detect_format('{ pkgs, ... }: { bar = "home.packages"; foo = [ pkgs.x ]; }', HOME) == "missing")
+@pytest.mark.parametrize("content,block,expected", [
+    (SYS_WPKGS, SYSTEM, "with_pkgs"),
+    (HOME_WPKGS, HOME, "with_pkgs"),
+    (SYS_EXPL, SYSTEM, "explicit_pkgs"),
+    (HOME_EXPL, HOME, "explicit_pkgs"),
+    (MULTILINE, HOME, "with_pkgs"),
+    (SYS_MULTILINE, SYSTEM, "with_pkgs"),
+    ('{\n  home.packages = [ ];\n}', HOME, "empty"),
+    ('{\n  home.packages = [];\n}', HOME, "empty"),
+    ('{\n  home.packages = with pkgs; [ ];\n}', HOME, "empty"),
+    ('{\n  home.packages = [\n\n  ];\n}', HOME, "empty"),
+    ('{\n  home.username = "u";\n}', HOME, "missing"),
+    ("", HOME, "missing"),
+    ('{ pkgs, ... }:\n{\n  # home.packages is managed manually\n  home.username = "u";\n}', HOME, "missing"),
+    ('{\n  environment.systemPackages = import ./pkgs.nix;\n}', SYSTEM, "external"),
+    ('{\n  environment.systemPackages = import ../sub/pkgs.nix;\n}', SYSTEM, "external"),
+    ('{\n  environment.systemPackages = mkMerge [ git ];\n}', SYSTEM, "unknown"),
+    ('{\n  environment.systemPackages = lib.mkIf true [ git ];\n}', SYSTEM, "unknown"),
+    ('{\n  environment.systemPackages = [ git ] ++ [ vim ];\n}', SYSTEM, "unknown"),
+    ('{\n  environment.systemPackages = [\n    git\n  ];\n}', SYSTEM, "unknown"),
+    ('{\n  environment.systemPackages = with pkgs; [\n    git\n}', SYSTEM, "unknown"),
+    (CROSS, HOME, "explicit_pkgs"),
+    (CROSS.replace("  home.packages = [\n    pkgs.git\n  ];\n",
+                   "  environment.systemPackages = [\n    pkgs.vim\n  ];\n")
+        .replace("  environment.systemPackages = with pkgs; [\n    vim\n  ];\n",
+                 "  home.packages = with pkgs; [\n    git\n  ];\n"), SYSTEM, "explicit_pkgs"),
+    ('{\n  home.packages = [\n    git\n  ];\n  programs.vim.package = pkgs.vim;\n}', HOME, "unknown"),
+], ids=[
+    "system with_pkgs",
+    "home with_pkgs",
+    "system explicit",
+    "home explicit",
+    "multiline with pkgs (different line) → with_pkgs",
+    "multiline system with pkgs → with_pkgs",
+    "empty [ ] → empty",
+    "empty [] → empty",
+    "empty with-pkgs form → empty",
+    "empty newline inside → empty",
+    "missing block → missing",
+    "empty file → missing",
+    "comment-only mention → missing",
+    "import ./ → external",
+    "import ../ → external",
+    "mkMerge → unknown",
+    "lib.mkIf → unknown",
+    "concat [a] ++ [b] → unknown",
+    "bare names without pkgs. → unknown",
+    "unclosed bracket → unknown",
+    "REGRESSION: plain home + with-pkgs system → home is explicit_pkgs",
+    "REGRESSION: plain system + with-pkgs home → system is explicit_pkgs",
+    "pkgs. elsewhere in file does not make bare list explicit",
+])
+def test_detect_format_matrix(content, block, expected):
+    assert detect_format(content, block) == expected
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# [1b] detect_format scoping
+# ══════════════════════════════════════════════════════════════════════════
+
+@pytest.mark.parametrize("content,block,expected", [
+    ('{ pkgs, ... }: { home.packages = with pkgs; [ git vim ]; }', HOME, "with_pkgs"),
+    ('{ pkgs, ... }: { home.packages = with    pkgs ; [ git ]; }', HOME, "with_pkgs"),
+    ('{ pkgs, ... }: { home.packages = # hi\n  with pkgs; [ git ]; }', HOME, "with_pkgs"),
+    ('{ pkgs, ... }: { home.packages = [ pkgs.git pkgs.vim ]; }', HOME, "explicit_pkgs"),
+    ('{ pkgs, ... }: { home.packages = [ pkgs.git # c\n ]; }', HOME, "explicit_pkgs"),
+    ('{ pkgs, ... }: { home.packages = [ (pkgs.foo.override { x = "]"; }) ]; }', HOME, "explicit_pkgs"),
+    ('{ pkgs, ... }: { home.packages = [ ]; }', HOME, "empty"),
+    ('{ pkgs, ... }: { home.username = "u"; }', HOME, "missing"),
+    ('{ pkgs, ... }: { environment.systemPackages = import ./p.nix; }', SYSTEM, "external"),
+    ('{ pkgs, ... }: { home.packages = mkMerge [ git ]; }', HOME, "unknown"),
+    ('{ pkgs, ... }: { home.packages = lib.mkIf x [ git ]; }', HOME, "unknown"),
+    ('{ pkgs, ... }: { home.packages = [ a ] ++ [ b ]; }', HOME, "unknown"),
+    ('{ pkgs, ... }: { home.packages =\n  other.option = [ pkgs.foo ]; }', HOME, "unknown"),
+    ('{ pkgs, ... }: { home.packages = with pkgs; [ git # see ]\n ]; }', HOME, "with_pkgs"),
+    ('{ pkgs, ... }: { home.packages = something; }', HOME, "unknown"),
+    ('{ pkgs, ... }: { home.packages =', HOME, "unknown"),
+    ('{ pkgs, ... }: { # home.packages here\n  foo.bar = [ pkgs.x ]; }', HOME, "missing"),
+    ('{ pkgs, ... }: { bar = "home.packages"; foo = [ pkgs.x ]; }', HOME, "missing"),
+], ids=[
+    "with_pkgs one-line",
+    "with_pkgs extra spaces around pkgs;",
+    "with_pkgs with trailing before",
+    "explicit one-line",
+    "explicit with inline comment",
+    "explicit ] inside quoted string",
+    "empty list",
+    "missing block",
+    "external import",
+    "mkMerge → unknown",
+    "lib.mkIf → unknown",
+    "[ a ] ++ [ b ] → unknown",
+    "assignment after = → unknown",
+    "[ inside line comment → with_pkgs (skipped)",
+    "bare identifier value → unknown",
+    "malformed = at EOF → unknown",
+    "block name in comment only → missing",
+    "block name in string only → missing",
+])
+def test_detect_format_scoping(content, block, expected):
+    assert detect_format(content, block) == expected
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # [2] add_package — contract per format
 # ══════════════════════════════════════════════════════════════════════════
-print("\n[2] add_package contract")
 
-# supported → success + content changed
-r = add_package(SYS_WPKGS, "htop", Path("/tmp"))
-check("with_pkgs: success + htop added", r.status == "success" and "htop" in r.content)
-r = add_package(SYS_EXPL, "htop", Path("/tmp"))
-check("explicit: success + pkgs.htop added", r.status == "success" and "pkgs.htop" in r.content)
-r = add_package(MULTILINE, "htop", Path("/tmp"), HOME)
-check("multiline with_pkgs: success + htop added", r.status == "success" and "htop" in r.content)
+def test_add_package_supported_formats():
+    r = add_package(SYS_WPKGS, "htop", Path("/tmp"))
+    assert r.status == "success" and "htop" in r.content
+    r = add_package(SYS_EXPL, "htop", Path("/tmp"))
+    assert r.status == "success" and "pkgs.htop" in r.content
+    r = add_package(MULTILINE, "htop", Path("/tmp"), HOME)
+    assert r.status == "success" and "htop" in r.content
 
-# unsupported → status + byte-for-byte unchanged
-for label, content, block, status in [
+
+@pytest.mark.parametrize("label,content,block,status", [
     ("empty", '{ pkgs, ... }:\n{\n  home.packages = [ ];\n}\n', HOME, "unsupported_empty"),
     ("missing", '{ pkgs, ... }:\n{\n  home.username = "u";\n}\n', HOME, "unsupported_missing"),
-    ("external", '{ pkgs, ... }:\n{\n  environment.systemPackages = import ./pkgs.nix;\n}\n', SYSTEM, "unsupported_external"),
-    ("unknown-mkMerge", '{ pkgs, ... }:\n{\n  environment.systemPackages = mkMerge [ git ];\n}\n', SYSTEM, "unsupported_unknown"),
-    ("unknown-bare", '{ pkgs, ... }:\n{\n  environment.systemPackages = [\n    git\n  ];\n}\n', SYSTEM, "unsupported_unknown"),
-]:
+    ("external", '{ pkgs, ... }:\n{\n  environment.systemPackages = import ./pkgs.nix;\n}\n',
+     SYSTEM, "unsupported_external"),
+    ("unknown-mkMerge", '{ pkgs, ... }:\n{\n  environment.systemPackages = mkMerge [ git ];\n}\n',
+     SYSTEM, "unsupported_unknown"),
+    ("unknown-bare", '{ pkgs, ... }:\n{\n  environment.systemPackages = [\n    git\n  ];\n}\n',
+     SYSTEM, "unsupported_unknown"),
+], ids=[
+    "empty: unsupported_empty + content byte-for-byte unchanged",
+    "missing: unsupported_missing + content byte-for-byte unchanged",
+    "external: unsupported_external + content byte-for-byte unchanged",
+    "unknown-mkMerge: unsupported_unknown + content byte-for-byte unchanged",
+    "unknown-bare: unsupported_unknown + content byte-for-byte unchanged",
+])
+def test_add_package_unsupported_formats(label, content, block, status):
     r = add_package(content, "htop", Path("/tmp"), block)
-    check(f"{label}: {status} + content byte-for-byte unchanged",
-          r.status == status and r.content == content,
-          f"status={r.status}")
+    assert r.status == status, f"status={r.status}"
+    assert r.content == content
 
-# no_change — defensive: handler returns identical content
-original = add_package(SYS_WPKGS, "htop", Path("/tmp")).content
-with patch("core.writer.add_package_with_pkgs", side_effect=lambda c, p, b: c):
-    r = add_package(SYS_WPKGS, "htop", Path("/tmp"))
-check("no_change when supported handler returns identical content",
-      r.status == "no_change" and r.content == SYS_WPKGS)
 
-# error — handler raises
-with patch("core.writer.add_package_with_pkgs", side_effect=RuntimeError("boom")):
-    r = add_package(SYS_WPKGS, "htop", Path("/tmp"))
-check("error when handler raises (original content preserved)",
-      r.status == "error" and r.content == SYS_WPKGS)
+def test_add_package_no_change_when_handler_returns_identical():
+    with patch("core.writer.add_package_with_pkgs", side_effect=lambda c, p, b: c):
+        r = add_package(SYS_WPKGS, "htop", Path("/tmp"))
+    assert r.status == "no_change"
+    assert r.content == SYS_WPKGS
+
+
+def test_add_package_error_when_handler_raises():
+    with patch("core.writer.add_package_with_pkgs", side_effect=RuntimeError("boom")):
+        r = add_package(SYS_WPKGS, "htop", Path("/tmp"))
+    assert r.status == "error"
+    assert r.content == SYS_WPKGS
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # [3] pkgs. prefix normalization (no double prefix)
 # ══════════════════════════════════════════════════════════════════════════
-print("\n[3] explicit reference normalization")
 
-for ref, expected in [
+@pytest.mark.parametrize("ref,expected", [
     ("vim", "pkgs.vim"),
     ("pkgs.vim", "pkgs.vim"),
     ("unstable.vim", "unstable.vim"),
     ("inputs.foo.packages.${pkgs.stdenv.hostPlatform.system}.vim",
      "inputs.foo.packages.${pkgs.stdenv.hostPlatform.system}.vim"),
-]:
+], ids=[
+    "vim → pkgs.vim",
+    "pkgs.vim → pkgs.vim",
+    "unstable.vim → unstable.vim",
+    "inputs.foo... → inputs.foo...",
+])
+def test_add_package_explicit_reference_normalization(ref, expected):
     r = add_package(SYS_EXPL, ref, Path("/tmp"))
-    added = [l.strip() for l in r.content.split("\n") if expected in l and "pkgs.git" not in l]
-    check(f"{ref} → {expected}", r.status == "success" and bool(added),
-          f"status={r.status} added={added}")
+    added = [l.strip() for l in r.content.split("\n")
+             if expected in l and "pkgs.git" not in l]
+    assert r.status == "success"
+    assert bool(added)
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # [4] remove_package / is_package_exists — gate behavior
 # ══════════════════════════════════════════════════════════════════════════
-print("\n[4] remove/exists gate")
 
-for label, content, block in [
+@pytest.mark.parametrize("label,content,block", [
     ("empty", '{\n  home.packages = [ ];\n}', HOME),
     ("missing", '{\n  home.username = "u";\n}', HOME),
     ("external", '{\n  environment.systemPackages = import ./p.nix;\n}', SYSTEM),
     ("unknown", '{\n  environment.systemPackages = mkMerge [ git ];\n}', SYSTEM),
-]:
+], ids=["empty", "missing", "external", "unknown"])
+def test_remove_and_exists_gate_unsupported(label, content, block):
     out, found = remove_package(content, "git", Path("/tmp"), block)
-    check(f"{label}: remove → (unchanged, False)",
-          out == content and found is False)
-    check(f"{label}: exists → False",
-          is_package_exists(content, "git", Path("/tmp"), block) is False)
+    assert out == content
+    assert found is False
+    assert is_package_exists(content, "git", Path("/tmp"), block) is False
 
-# supported: no regression
-out, found = remove_package(SYS_WPKGS, "git", Path("/tmp"))
-check("with_pkgs remove: found, git gone", found and "git" not in out)
-check("with_pkgs exists", is_package_exists(SYS_WPKGS, "git", Path("/tmp")))
-out, found = remove_package(SYS_EXPL, "git", Path("/tmp"))
-check("explicit remove (bare name matches pkgs.git)", found and "pkgs.git" not in out)
-check("explicit exists (bare name)", is_package_exists(SYS_EXPL, "git", Path("/tmp")))
+
+def test_remove_package_supported():
+    out, found = remove_package(SYS_WPKGS, "git", Path("/tmp"))
+    assert found and "git" not in out
+    assert is_package_exists(SYS_WPKGS, "git", Path("/tmp"))
+    out, found = remove_package(SYS_EXPL, "git", Path("/tmp"))
+    assert found and "pkgs.git" not in out
+    assert is_package_exists(SYS_EXPL, "git", Path("/tmp"))
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # [5] add_flake_package — no bypass, fallback only on missing
 # ══════════════════════════════════════════════════════════════════════════
-print("\n[5] add_flake_package contract")
 
-FLAKE_LINE = "inputs.repo.packages.${pkgs.stdenv.hostPlatform.system}.default"
+def test_add_flake_package_contract():
+    r = add_flake_package(HOME_EXPL, "repo", "default", block=HOME)
+    line = [l for l in r.content.split("\n") if "inputs.repo" in l]
+    assert r.status == "success"
+    assert line and line[0].strip() == FLAKE_LINE
 
-# explicit block, supported → success, no pkgs. prefix on flake ref
-r = add_flake_package(HOME_EXPL, "repo", "default", block=HOME)
-line = [l for l in r.content.split("\n") if "inputs.repo" in l]
-check("flake ref in explicit home: no pkgs. prefix (full-line)",
-      r.status == "success" and line and line[0].strip() == FLAKE_LINE,
-      f"line={line}")
+    r = add_flake_package(HOME_WPKGS, "repo", "default", block=HOME)
+    assert r.status == "success" and "inputs.repo.packages" in r.content
 
-r = add_flake_package(HOME_WPKGS, "repo", "default", block=HOME)
-check("flake ref in with_pkgs home: success", r.status == "success" and "inputs.repo.packages" in r.content)
+    r = add_flake_package('{\n  home.packages = [ ];\n}', "repo", "default", block=HOME)
+    assert r.status == "unsupported_empty"
 
-# unsupported home (empty) + explicit block → unsupported_empty, NO fallback
-r = add_flake_package('{\n  home.packages = [ ];\n}', "repo", "default", block=HOME)
-check("empty home + explicit block → unsupported_empty (no fallback)",
-      r.status == "unsupported_empty")
+    r = add_flake_package('{\n  home.packages = [ ];\n  environment.systemPackages = with pkgs; [ git ];\n}',
+                          "repo", "default")
+    assert r.status == "unsupported_empty"
 
-# block=None: home exists but unsupported → status preserved, NO silent fallback
-r = add_flake_package('{\n  home.packages = [ ];\n  environment.systemPackages = with pkgs; [ git ];\n}',
-                      "repo", "default")
-check("block=None: unsupported home keeps status (no silent System fallback)",
-      r.status == "unsupported_empty")
+    r = add_flake_package(SYS_WPKGS, "repo", "default")
+    assert r.status == "success" and "inputs.repo.packages" in r.content
 
-# block=None: home missing → legacy fallback to SYSTEM
-r = add_flake_package(SYS_WPKGS, "repo", "default")
-check("block=None: missing home → System fallback works",
-      r.status == "success" and "inputs.repo.packages" in r.content)
-
-# block=None: home supported → home targeted
-r = add_flake_package(HOME_WPKGS + '\n  environment.systemPackages = with pkgs; [ vim ];\n'.join(["{ pkgs, ... }:\n{", "}"]),
-                      "repo", "default")
-check("block=None: supported home is targeted first",
-      r.status == "success" and "inputs.repo.packages" in r.content)
+    r = add_flake_package(HOME_WPKGS + '\n  environment.systemPackages = with pkgs; [ vim ];\n'
+                          .join(["{ pkgs, ... }:\n{\n", "}"]), "repo", "default")
+    assert r.status == "success" and "inputs.repo.packages" in r.content
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # [6] add_flake — 3-tuple with status
 # ══════════════════════════════════════════════════════════════════════════
-print("\n[6] add_flake status propagation")
 
-FLAKE_NIX = '{\n  inputs = {\n    nixpkgs.url = "github:NixOS/nixpkgs";\n  };\n  outputs = { nixpkgs, ... }: {\n  };\n}\n'
+def test_add_flake_status_propagation():
+    fc, hc, st = add_flake(FLAKE_NIX, "repo", "github:x/y", "default", "package",
+                           home_content=HOME_WPKGS, block=HOME)
+    assert st == "success" and "inputs.repo.packages" in hc
 
-fc, hc, st = add_flake(FLAKE_NIX, "repo", "github:x/y", "default", "package",
-                       home_content=HOME_WPKGS, block=HOME)
-check("supported home: status success, ref in home",
-      st == "success" and "inputs.repo.packages" in hc)
+    fc, hc, st = add_flake(FLAKE_NIX, "repo", "github:x/y", "default", "package",
+                           home_content='{\n  home.packages = [ ];\n}', block=HOME)
+    assert st == "unsupported_empty"
+    assert hc == '{\n  home.packages = [ ];\n}'
 
-fc, hc, st = add_flake(FLAKE_NIX, "repo", "github:x/y", "default", "package",
-                       home_content='{\n  home.packages = [ ];\n}', block=HOME)
-check("unsupported home: status propagated (not swallowed)",
-      st == "unsupported_empty" and hc == '{\n  home.packages = [ ];\n}')
-
-fc, hc, st = add_flake(FLAKE_NIX, "repo", "github:x/y", "default", "nixosModule")
-check("nixosModule: status stays success",
-      st == "success")
+    fc, hc, st = add_flake(FLAKE_NIX, "repo", "github:x/y", "default", "nixosModule")
+    assert st == "success"
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # [7] executor — unsupported format → False, no rebuild, restore called
 # ══════════════════════════════════════════════════════════════════════════
-print("\n[7] executor gate")
 
-from flakes.executor import execute
-from flakes.models import FlakeSource, FlakeOutput, InstallationPlan
-from core.target import Target
-
-def make_plan():
+def _make_plan():
+    from flakes.models import FlakeSource, FlakeOutput, InstallationPlan
     return InstallationPlan(
         source=FlakeSource(url="github:x/y"),
-        output=FlakeOutput(name="default", type="packages", attribute="packages.x86_64-linux.default"),
+        output=FlakeOutput(name="default", type="packages",
+                           attribute="packages.x86_64-linux.default"),
         action="install", system="x86_64-linux", flake_name="repo",
     )
 
-with tempfile.TemporaryDirectory() as td:
-    Path(td, "flake.nix").write_text(FLAKE_NIX)
-    Path(td, "home.nix").write_text('{\n  home.packages = [ ];\n}')  # unsupported
-    Path(td, "configuration.nix").write_text(SYS_WPKGS)
-    cfg = {"setup": {"configuration_path": str(Path(td, "configuration.nix")),
-                     "flake_enabled": True, "flake_path": str(Path(td, "flake.nix")),
-                     "home_manager_enabled": True, "home_manager_path": str(Path(td, "home.nix"))}}
+
+def test_executor_unsupported_format_gate(tmp_path):
+    from flakes.executor import execute
+
+    (tmp_path / "flake.nix").write_text(FLAKE_NIX)
+    (tmp_path / "home.nix").write_text('{\n  home.packages = [ ];\n}')
+    (tmp_path / "configuration.nix").write_text(SYS_WPKGS)
+    cfg = {"setup": {"configuration_path": str(tmp_path / "configuration.nix"),
+                     "flake_enabled": True, "flake_path": str(tmp_path / "flake.nix"),
+                     "home_manager_enabled": True,
+                     "home_manager_path": str(tmp_path / "home.nix")}}
     with patch("flakes.executor.subprocess.run") as mr, \
          patch("flakes.executor.backup_files") as mb, \
          patch("flakes.executor.restore_files") as mrb:
         mr.return_value = MagicMock(returncode=0)
-        ok = execute(make_plan(), cfg, target=Target.HOME)
-    check("executor: unsupported home format → False", ok is False)
-    check("executor: no rebuild ran", not mr.called)
-    check("executor: restore called (rollback)", mrb.called)
-    check("executor: home.nix untouched",
-          Path(td, "home.nix").read_text() == '{\n  home.packages = [ ];\n}')
+        ok = execute(_make_plan(), cfg, target=Target.HOME)
+    assert ok is False
+    assert not mr.called
+    assert mrb.called
+    assert (tmp_path / "home.nix").read_text() == '{\n  home.packages = [ ];\n}'
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # [8] main/UI boundary — pre-check shows message, execute not called
 # ══════════════════════════════════════════════════════════════════════════
-print("\n[8] main boundary")
 
-import io
-from contextlib import redirect_stdout
-import main as main_mod
+def test_main_flakes_install_unsupported_format(tmp_path):
+    import main as main_mod
 
-with tempfile.TemporaryDirectory() as td:
-    Path(td, "flake.nix").write_text(FLAKE_NIX)
-    Path(td, "home.nix").write_text('{\n  home.packages = [ ];\n}')  # unsupported
-    cfg = {"setup": {"configuration_path": str(Path(td, "configuration.nix")),
-                     "flake_enabled": True, "flake_path": str(Path(td, "flake.nix")),
-                     "home_manager_enabled": True, "home_manager_path": str(Path(td, "home.nix"))}}
+    (tmp_path / "flake.nix").write_text(FLAKE_NIX)
+    (tmp_path / "home.nix").write_text('{\n  home.packages = [ ];\n}')
+    cfg = {"setup": {"configuration_path": str(tmp_path / "configuration.nix"),
+                     "flake_enabled": True, "flake_path": str(tmp_path / "flake.nix"),
+                     "home_manager_enabled": True,
+                     "home_manager_path": str(tmp_path / "home.nix")}}
     with patch("main.parse_flake_url") as mp, \
          patch("main.show_unsupported_format") as ms, \
          redirect_stdout(io.StringIO()):
         main_mod.handle_flakes_install("github:x/y", cfg, requested=Target.HOME)
-    check("main: pre-check shows unsupported message", ms.called)
-    check("main: resolver never started (execute not reached)",
-          not mp.called)
+    assert ms.called
+    assert not mp.called
 
-# handle_remove: unsupported format → message, not "not found"
-with tempfile.TemporaryDirectory() as td:
-    conf = Path(td, "configuration.nix")
+
+def test_main_remove_unsupported_format(tmp_path):
+    import main as main_mod
+
+    conf = tmp_path / "configuration.nix"
     conf.write_text('{\n  environment.systemPackages = import ./pkgs.nix;\n}')
     cfg = {"setup": {"configuration_path": str(conf), "flake_enabled": False}}
     with patch("main.show_unsupported_format") as ms, \
          patch("main.is_package_exists") as mie, \
          redirect_stdout(io.StringIO()):
         main_mod.handle_remove("git", cfg)
-    check("main remove: unsupported format → message (not 'not found')", ms.called)
-    check("main remove: is_package_exists not reached", not mie.called)
+    assert ms.called
+    assert not mie.called
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# [9] Detection boundaries — strengthened detector (§2)
+# [9] Detection boundaries — strengthened detector
 # ══════════════════════════════════════════════════════════════════════════
-print("\n[9] detection boundary regressions")
 
-# unrelated assignment between = and a later list → unknown (never the block's list)
-check("assignment after = (blank line) → unknown",
-      detect_format('{ pkgs, ... }:\n{\n  home.packages =\n\n  other.option = [\n    pkgs.foo\n  ];\n}\n', HOME) == "unknown")
-check("assignment after = (no blank) → unknown",
-      detect_format('{ pkgs, ... }:\n{\n  home.packages =\n  other.option = [\n    pkgs.git\n  ];\n}\n', HOME) == "unknown")
+@pytest.mark.parametrize("content,expected", [
+    ('{ pkgs, ... }:\n{\n  home.packages =\n\n  other.option = [\n    pkgs.foo\n  ];\n}\n',
+     "unknown"),
+    ('{ pkgs, ... }:\n{\n  home.packages =\n  other.option = [\n    pkgs.git\n  ];\n}\n',
+     "unknown"),
+    ('{ pkgs, ... }:\n{\n  home.packages =\n    # managed\n    [ pkgs.git ];\n}\n',
+     "explicit_pkgs"),
+    ('{ pkgs, ... }:\n{\n  home.packages =\n    # list\n    with pkgs; [ git ];\n}\n',
+     "with_pkgs"),
+    ('{ pkgs, ... }:\n{\n  home.packages =  # note ]\n    with pkgs; [ git ];\n}\n',
+     "with_pkgs"),
+    ('{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    git\n    # see [docs] ]\n  ];\n}\n',
+     "with_pkgs"),
+    ('{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    (pkgs.foo.override { x = "]"; })\n  ];\n}\n',
+     "with_pkgs"),
+    ('{ pkgs, ... }:\n{\n  home.packages =\n    # todo\n}\n', "unknown"),
+    ('{\n  home.packages =', "unknown"),
+    ('{\n  home.packages = something;\n}', "unknown"),
+], ids=[
+    "assignment after = (blank line) → unknown",
+    "assignment after = (no blank) → unknown",
+    "comment line before list → explicit_pkgs",
+    "comment line before with pkgs → with_pkgs",
+    "trailing comment with ] before value → with_pkgs",
+    "] inside line comment inside list → with_pkgs",
+    "] inside quoted string inside list → with_pkgs",
+    "= with only a comment afterwards → unknown",
+    "= at end of file → unknown",
+    "value is a bare identifier → unknown",
+])
+def test_detect_format_boundaries(content, expected):
+    assert detect_format(content, HOME) == expected
 
-# comments between = and value are harmless whitespace
-check("comment line before list → explicit_pkgs",
-      detect_format('{ pkgs, ... }:\n{\n  home.packages =\n    # managed\n    [ pkgs.git ];\n}\n', HOME) == "explicit_pkgs")
-check("comment line before with pkgs → with_pkgs",
-      detect_format('{ pkgs, ... }:\n{\n  home.packages =\n    # list\n    with pkgs; [ git ];\n}\n', HOME) == "with_pkgs")
-check("trailing comment with ] before value → with_pkgs",
-      detect_format('{ pkgs, ... }:\n{\n  home.packages =  # note ]\n    with pkgs; [ git ];\n}\n', HOME) == "with_pkgs")
-
-# brackets inside strings/comments inside the list must not break matching
-check("] inside line comment inside list → with_pkgs",
-      detect_format('{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    git\n    # see [docs] ]\n  ];\n}\n', HOME) == "with_pkgs")
-check("] inside quoted string inside list → with_pkgs",
-      detect_format('{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    (pkgs.foo.override { x = "]"; })\n  ];\n}\n', HOME) == "with_pkgs")
-
-# malformed/ambiguous → unknown (prefer unknown over guessing)
-check("= with only a comment afterwards → unknown",
-      detect_format('{ pkgs, ... }:\n{\n  home.packages =\n    # todo\n}\n', HOME) == "unknown")
-check("= at end of file → unknown",
-      detect_format('{\n  home.packages =', HOME) == "unknown")
-check("value is a bare identifier → unknown",
-      detect_format('{\n  home.packages = something;\n}', HOME) == "unknown")
 
 # ══════════════════════════════════════════════════════════════════════════
-# [10] Mutation gateway — architectural invariant (§1)
+# [10] Mutation gateway — architectural invariant
 # ══════════════════════════════════════════════════════════════════════════
-print("\n[10] single mutation gateway")
 
-# Flake insertion cannot bypass add_package: patch add_package and prove
-# add_flake_package routes through it (both explicit-block and fallback).
-with patch("core.writer.add_package",
-           side_effect=lambda c, p, d, b="environment.systemPackages": AddResult(content=c, status="unsupported_unknown")) as mock_add:
-    r1 = add_flake_package(HOME_WPKGS, "repo", "default", block=HOME)
-    r2 = add_flake_package(SYS_WPKGS, "repo", "default")  # block=None fallback
-check("add_flake_package (explicit block) routes through add_package",
-      mock_add.called and r1.status == "unsupported_unknown")
-check("add_flake_package (fallback) routes through add_package",
-      mock_add.call_count == 2 and r2.status == "unsupported_unknown")
+def test_add_flake_package_routes_through_add_package():
+    with patch("core.writer.add_package",
+               side_effect=lambda c, p, d, b="environment.systemPackages":
+               AddResult(content=c, status="unsupported_unknown")) as mock_add:
+        r1 = add_flake_package(HOME_WPKGS, "repo", "default", block=HOME)
+        r2 = add_flake_package(SYS_WPKGS, "repo", "default")
+    assert mock_add.called
+    assert r1.status == "unsupported_unknown"
+    assert mock_add.call_count == 2
+    assert r2.status == "unsupported_unknown"
 
-# unsupported → no mutation, ever
-for label, content, block in [
+
+@pytest.mark.parametrize("label,content,block", [
     ("empty", '{\n  home.packages = [ ];\n}', HOME),
     ("missing", '{\n  home.username = "u";\n}', HOME),
     ("external", '{\n  environment.systemPackages = import ./p.nix;\n}', SYSTEM),
     ("unknown", '{\n  environment.systemPackages = mkMerge [ git ];\n}', SYSTEM),
-]:
+], ids=["empty", "missing", "external", "unknown"])
+def test_add_package_never_mutates_unsupported(label, content, block):
     r = add_package(content, "htop", Path("/tmp"), block)
-    check(f"{label}: content byte-for-byte unchanged", r.content == content)
+    assert r.content == content
 
-# the two handlers are module-level but only reachable via add_package's
-# dispatch — prove it statically: no call to either handler anywhere in
-# production code outside add_package's own body (tests may patch them).
-import inspect as _inspect
-import core.writer as _w
-_wlines = _inspect.getsource(_w).split("\n")
-_wdef = [i for i, l in enumerate(_wlines) if l.startswith("def add_package(")][0]
-_wend = next(i for i in range(_wdef + 1, len(_wlines))
-             if _wlines[i] and not _wlines[i][0].isspace())
-_outside_calls = [
-    f"line {i+1}: {l.strip()}"
-    for i, l in enumerate(_wlines)
-    for h in ("add_package_with_pkgs", "add_package_explicit_pkgs")
-    if f"{h}(" in l and f"def {h}(" not in l and not (_wdef <= i <= _wend)
-]
-check("handlers called ONLY inside add_package body (single gateway)",
-      not _outside_calls, "; ".join(_outside_calls))
 
-# ══════════════════════════════════════════════════════════════════════════
-print("\n" + "=" * 70)
-print(f"RESULTS: {len(PASS)} passed, {len(FAIL)} failed")
-if FAIL:
-    for f in FAIL:
-        print(f"  ✗ {f}")
-print("=" * 70)
-sys.exit(1 if FAIL else 0)
+def test_supported_handlers_called_only_inside_add_package():
+    import core.writer as _w
+    wlines = inspect.getsource(_w).split("\n")
+    wdef = [i for i, l in enumerate(wlines) if l.startswith("def add_package(")][0]
+    wend = next(i for i in range(wdef + 1, len(wlines))
+                if wlines[i] and not wlines[i][0].isspace())
+    outside_calls = [
+        f"line {i + 1}: {l.strip()}"
+        for i, l in enumerate(wlines)
+        for h in ("add_package_with_pkgs", "add_package_explicit_pkgs")
+        if f"{h}(" in l and f"def {h}(" not in l and not (wdef <= i <= wend)
+    ]
+    assert not outside_calls, "; ".join(outside_calls)

@@ -4,46 +4,42 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nxXtend"
-version = "0.1.0"
+version = "0.1.2"
 description = "Automates package management across NixOS system configuration, Home Manager, and Flakes."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "GPL-3.0-or-later" }
-authors = [
-    { name = "9-pixels" },
-]
+authors = [{ name = "9-pixels" }]
 
 keywords = [
-    "nix",
-    "nixos",
-    "configuration",
-    "package-manager",
-    "flakes",
-    "linux",
+  "nix",
+  "nixos",
+  "configuration",
+  "package-manager",
+  "flakes",
+  "linux",
 ]
 
 classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Environment :: Console",
-    "Intended Audience :: Developers",
-    "Intended Audience :: System Administrators",
-    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
-    "Operating System :: POSIX :: Linux",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3.14",
-    "Topic :: System :: Installation/Setup",
-    "Topic :: System :: Systems Administration",
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Intended Audience :: System Administrators",
+  "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: System :: Installation/Setup",
+  "Topic :: System :: Systems Administration",
 ]
 
-dependencies = [
-    "requests>=2.32",
-    "rich>=14.0",
-    "toml>=0.10",
-]
+dependencies = ["requests>=2.32", "rich>=14.0", "toml>=0.10"]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
 
 [project.urls]
 Homepage = "https://github.com/9-pixels/nxXtend"
@@ -55,7 +51,7 @@ nx = "main:main"
 
 [tool.setuptools]
 include-package-data = true
-package-dir = {"" = "src"}
+package-dir = { "" = "src" }
 py-modules = ["main"]
 
 [tool.setuptools.packages.find]
@@ -63,3 +59,8 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+testpaths = ["src/tests"]
+addopts = "-ra --strict-markers"
+markers = [
+  "known_issue: expected failure documenting a known defect (strict xfail)",
+]

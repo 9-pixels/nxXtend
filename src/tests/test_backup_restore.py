@@ -1,11 +1,7 @@
-import sys
-import os
-import shutil
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
 from core.writer import backup_files, restore_files
 
@@ -81,27 +77,3 @@ def test_restore_with_missing_backup():
             with patch("core.writer.Path", side_effect=patched_path):
                 restore_files([test_file])
                 mock_copy.assert_not_called()
-
-
-if __name__ == "__main__":
-    tests = [
-        test_backup_creates_backup_dir,
-        test_restore_from_backup,
-        test_backup_with_missing_file,
-        test_restore_with_missing_backup,
-    ]
-    passed = failed = 0
-    for t in tests:
-        try:
-            t()
-            print(f"  ✓ {t.__name__}")
-            passed += 1
-        except AssertionError as e:
-            print(f"  ✗ {t.__name__}: {e}")
-            failed += 1
-        except Exception as e:
-            print(f"  ✗ {t.__name__}: {type(e).__name__}: {e}")
-            failed += 1
-    print(f"\n  {passed} passed, {failed} failed")
-    if failed:
-        sys.exit(1)

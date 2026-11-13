@@ -10,20 +10,22 @@ The Nix reference identity of a package is its attribute path
 These tests pin that contract at every stage of the pipeline: API mapping,
 package model, reference construction, duplicate detection, collision
 detection and search-result deduplication.
+
+Migrated from unittest.TestCase to plain pytest classes; every test method
+maps 1:1 to a collected pytest test. The API search helper now targets the
+``api.*`` namespace used by the application instead of ``src.api.*``, so the
+modules are no longer loaded twice under two names.
 """
-import sys
-import unittest
+import importlib
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
-from models.package import Package
 from core.manager import deduplicate
 from core.writer import (
     build_package_reference, resolve_identity,
     is_package_exists, is_package_name_taken,
 )
+from models.package import Package
 
 TP = Path("/tmp")
 
@@ -51,35 +53,36 @@ def _mock_response(hits):
     return resp
 
 
-class TestApiMapsAttributeFromAttrName(unittest.TestCase):
+def search_module(module, hits):
+    """Call the real API search function with `requests.post` mocked."""
+    with patch(f"api.{module}.requests.post", return_value=_mock_response(hits)):
+        mod = importlib.import_module(f"api.{module}")
+        return mod.stable_search("q") if module == "stable" else mod.unstable_search("q")
+
+
+class TestApiMapsAttributeFromAttrName:
     """Case A/D/E — stable and unstable must map attribute <- package_attr_name."""
 
-    def _search(self, module, hits):
-        with patch(f"src.api.{module}.requests.post",
-                   return_value=_mock_response(hits)):
-            mod = __import__(f"src.api.{module}", fromlist=["search"])
-            return mod.stable_search("q") if module == "stable" else mod.unstable_search("q")
-
     def test_stable_attribute_is_attr_name_not_pname(self):
-        pkgs = self._search("stable", [_api_hit(ATTR, PNAME)])
-        self.assertEqual(len(pkgs), 1)
-        self.assertEqual(pkgs[0].attribute, ATTR)
-        self.assertEqual(pkgs[0].name, PNAME)
+        pkgs = search_module("stable", [_api_hit(ATTR, PNAME)])
+        assert len(pkgs) == 1
+        assert pkgs[0].attribute == ATTR
+        assert pkgs[0].name == PNAME
 
     def test_unstable_attribute_is_attr_name_not_pname(self):
-        pkgs = self._search("unstable", [_api_hit(ATTR, PNAME)])
-        self.assertEqual(len(pkgs), 1)
-        self.assertEqual(pkgs[0].attribute, ATTR)
-        self.assertEqual(pkgs[0].name, PNAME)
+        pkgs = search_module("unstable", [_api_hit(ATTR, PNAME)])
+        assert len(pkgs) == 1
+        assert pkgs[0].attribute == ATTR
+        assert pkgs[0].name == PNAME
 
     def test_stable_and_unstable_agree_on_identity(self):
         hits = [_api_hit(ATTR, PNAME)]
-        s = self._search("stable", hits)[0]
-        u = self._search("unstable", hits)[0]
-        self.assertEqual(s.attribute, u.attribute)
-        self.assertEqual(s.name, u.name)
-        self.assertEqual(s.source, "stable")
-        self.assertEqual(u.source, "unstable")
+        s = search_module("stable", hits)[0]
+        u = search_module("unstable", hits)[0]
+        assert s.attribute == u.attribute
+        assert s.name == u.name
+        assert s.source == "stable"
+        assert u.source == "unstable"
 
     def test_missing_attr_name_record_is_skipped(self):
         """Case E — no fallback to package_pname; malformed records are dropped."""
@@ -90,82 +93,75 @@ class TestApiMapsAttributeFromAttrName(unittest.TestCase):
             {"_source": {"package_attr_name": "", "package_pname": "x",
                          "package_pversion": "1.0", "package_description": "d"}},
         ]
-        pkgs = self._search("stable", hits)
-        self.assertEqual([p.attribute for p in pkgs], ["ripgrep"])
+        pkgs = search_module("stable", hits)
+        assert [p.attribute for p in pkgs] == ["ripgrep"]
         # the pname must never leak in as an identity
-        self.assertNotIn(PNAME, [p.attribute for p in pkgs])
+        assert PNAME not in [p.attribute for p in pkgs]
 
     def test_unstable_missing_attr_name_record_is_skipped(self):
         hits = [{"_source": {"package_pname": PNAME, "package_pversion": "1.0",
                              "package_description": "d"}}]
-        self.assertEqual(self._search("unstable", hits), [])
+        assert search_module("unstable", hits) == []
 
 
-class TestPackageModelKeepsBothIdentities(unittest.TestCase):
+class TestPackageModelKeepsBothIdentities:
     """Case C — name (pname) must survive as metadata, not become an alias."""
 
     def test_name_and_attribute_are_independent_fields(self):
         p = Package(name=PNAME, version="1.0", description="d",
                     source="stable", type=None, attribute=ATTR)
-        self.assertEqual(p.name, PNAME)
-        self.assertEqual(p.attribute, ATTR)
-        self.assertNotEqual(p.name, p.attribute)
+        assert p.name == PNAME
+        assert p.attribute == ATTR
+        assert p.name != p.attribute
 
     def test_name_is_not_overwritten_by_attribute(self):
         p = Package(name=PNAME, version="1.0", description="d",
                     source="stable", type=None, attribute=ATTR)
         # building a reference must not mutate the display identity
         build_package_reference(p.attribute, p.source, "explicit_pkgs")
-        self.assertEqual(p.name, PNAME)
+        assert p.name == PNAME
 
 
-class TestReferenceConstruction(unittest.TestCase):
+class TestReferenceConstruction:
     """Cases A/B — the attribute path is written, never the pname."""
 
     def test_case_a_attr_with_pkgs(self):
-        self.assertEqual(
-            build_package_reference(ATTR, "stable", "with_pkgs"),
-            ATTR)
+        assert build_package_reference(ATTR, "stable", "with_pkgs") == ATTR
 
     def test_case_a_attr_explicit(self):
-        self.assertEqual(
-            build_package_reference(ATTR, "stable", "explicit_pkgs"),
-            f"pkgs.{ATTR}")
+        assert build_package_reference(ATTR, "stable", "explicit_pkgs") == f"pkgs.{ATTR}"
 
     def test_case_a_never_produces_pname_reference(self):
         ref = build_package_reference(ATTR, "stable", "explicit_pkgs")
         # Exact match, not substring: "nx" is a prefix of "nxXtend", so a
         # substring check would false-positive here.
-        self.assertNotEqual(ref, f"pkgs.{PNAME}")
-        self.assertEqual(ref, f"pkgs.{ATTR}")
-        self.assertNotEqual(ref.split(".")[-1], PNAME)
+        assert ref != f"pkgs.{PNAME}"
+        assert ref == f"pkgs.{ATTR}"
+        assert ref.split(".")[-1] != PNAME
 
     def test_case_b_nested_attribute_stays_intact(self):
         attr = "python314Packages.xstatic-asciinema-player"
-        self.assertEqual(
-            build_package_reference(attr, "stable", "explicit_pkgs"),
-            f"pkgs.{attr}")
+        assert build_package_reference(attr, "stable", "explicit_pkgs") == f"pkgs.{attr}"
 
     def test_case_b_nested_attribute_not_truncated(self):
         ref = build_package_reference(
             "python314Packages.xstatic-asciinema-player", "stable", "explicit_pkgs")
-        self.assertIn("python314Packages.xstatic-asciinema-player", ref)
-        self.assertNotEqual(ref, "pkgs.xstatic-asciinema-player")
+        assert "python314Packages.xstatic-asciinema-player" in ref
+        assert ref != "pkgs.xstatic-asciinema-player"
 
     def test_case_b_no_duplicated_attribute_set(self):
         ref = build_package_reference(
             "python314Packages.xstatic-asciinema-player", "stable", "explicit_pkgs")
-        self.assertEqual(ref.count("python314Packages"), 1)
+        assert ref.count("python314Packages") == 1
 
     def test_unstable_nested_attribute(self):
-        self.assertEqual(
-            build_package_reference(
-                "python314Packages.xstatic-asciinema-player",
-                "unstable", "with_pkgs", "unstable"),
-            "unstable.python314Packages.xstatic-asciinema-player")
+        assert build_package_reference(
+            "python314Packages.xstatic-asciinema-player",
+            "unstable", "with_pkgs", "unstable") == \
+            "unstable.python314Packages.xstatic-asciinema-player"
 
 
-class TestIdentityDrivesDuplicateAndCollisionDetection(unittest.TestCase):
+class TestIdentityDrivesDuplicateAndCollisionDetection:
     """Case D/F/H/I — detection must use the attribute, never the pname."""
 
     WRONG_PKG_INSTALLED = '''{ pkgs, ... }: {
@@ -182,34 +178,30 @@ class TestIdentityDrivesDuplicateAndCollisionDetection(unittest.TestCase):
 
     def test_case_i_pname_is_not_the_identity(self):
         """`nx` installed must NOT satisfy a request for `nxXtend`."""
-        self.assertFalse(
-            is_package_exists(self.WRONG_PKG_INSTALLED, ATTR, TP,
-                              source="stable"))
+        assert not is_package_exists(
+            self.WRONG_PKG_INSTALLED, ATTR, TP, source="stable")
 
     def test_case_h_installed_attribute_is_recognised(self):
-        self.assertTrue(
-            is_package_exists(self.RIGHT_PKG_INSTALLED, ATTR, TP,
-                              source="stable"))
+        assert is_package_exists(
+            self.RIGHT_PKG_INSTALLED, ATTR, TP, source="stable")
 
     def test_case_i_pname_does_not_collide(self):
         """An installed `nx` must not block installing `nxXtend`."""
-        self.assertFalse(
-            is_package_name_taken(self.WRONG_PKG_INSTALLED, ATTR, TP))
+        assert not is_package_name_taken(self.WRONG_PKG_INSTALLED, ATTR, TP)
 
     def test_resolve_identity_uses_attribute(self):
         ident = resolve_identity(ATTR, "stable")
-        self.assertEqual(ident.reference, ATTR)
-        self.assertEqual(ident.name, ATTR)
-        self.assertNotEqual(ident.reference, PNAME)
+        assert ident.reference == ATTR
+        assert ident.name == ATTR
+        assert ident.reference != PNAME
 
     def test_nested_attribute_identity(self):
         ident = resolve_identity(
             "python314Packages.xstatic-asciinema-player", "stable")
-        self.assertEqual(ident.reference,
-                         "python314Packages.xstatic-asciinema-player")
+        assert ident.reference == "python314Packages.xstatic-asciinema-player"
 
 
-class TestManagerDeduplication(unittest.TestCase):
+class TestManagerDeduplication:
     """Case D — dedup keys on attribute, so same-pname packages both survive."""
 
     def _pkg(self, attr, pname, source="stable"):
@@ -218,11 +210,11 @@ class TestManagerDeduplication(unittest.TestCase):
 
     def test_same_pname_different_attribute_both_kept(self):
         pkgs = [self._pkg(PNAME, PNAME), self._pkg(ATTR, PNAME)]
-        self.assertEqual(len(deduplicate(pkgs)), 2)
+        assert len(deduplicate(pkgs)) == 2
 
     def test_exact_duplicate_removed(self):
         pkgs = [self._pkg(ATTR, PNAME), self._pkg(ATTR, PNAME)]
-        self.assertEqual(len(deduplicate(pkgs)), 1)
+        assert len(deduplicate(pkgs)) == 1
 
     def test_nested_attr_set_variants_are_distinct(self):
         pkgs = [
@@ -231,10 +223,10 @@ class TestManagerDeduplication(unittest.TestCase):
             self._pkg("python313Packages.xstatic-asciinema-player",
                       "xstatic-asciinema-player"),
         ]
-        self.assertEqual(len(deduplicate(pkgs)), 2)
+        assert len(deduplicate(pkgs)) == 2
 
 
-class TestRealNixpkgsAdversarialRegression(unittest.TestCase):
+class TestRealNixpkgsAdversarialRegression:
     """The real-world case that exposed the bug.
 
     Unlike the generic ``nx``/``nxXtend`` example, both attributes here exist
@@ -250,29 +242,23 @@ class TestRealNixpkgsAdversarialRegression(unittest.TestCase):
     ADVERSARIAL_ATTR = "asciinema-agg"
     ADVERSARIAL_PNAME = "agg"
 
-    def _search(self, module, hits):
-        with patch(f"src.api.{module}.requests.post",
-                   return_value=_mock_response(hits)):
-            mod = __import__(f"src.api.{module}", fromlist=["search"])
-            return mod.stable_search("q") if module == "stable" else mod.unstable_search("q")
-
     def test_api_maps_attribute_not_pname(self):
-        pkgs = self._search("stable",
-                            [_api_hit(self.ADVERSARIAL_ATTR, self.ADVERSARIAL_PNAME)])
-        self.assertEqual(pkgs[0].attribute, "asciinema-agg")
-        self.assertEqual(pkgs[0].name, "agg")
+        pkgs = search_module(
+            "stable", [_api_hit(self.ADVERSARIAL_ATTR, self.ADVERSARIAL_PNAME)])
+        assert pkgs[0].attribute == "asciinema-agg"
+        assert pkgs[0].name == "agg"
 
     def test_reference_is_asciinema_agg_not_agg(self):
         ref = build_package_reference(
             self.ADVERSARIAL_ATTR, "stable", "explicit_pkgs")
-        self.assertEqual(ref, "pkgs.asciinema-agg")
-        self.assertNotEqual(ref, "pkgs.agg")
+        assert ref == "pkgs.asciinema-agg"
+        assert ref != "pkgs.agg"
 
     def test_wrong_package_is_never_referenced(self):
         """The trap: pkgs.agg is valid Nix, so this must fail silently."""
         ref = build_package_reference(
             self.ADVERSARIAL_ATTR, "stable", "with_pkgs")
-        self.assertNotEqual(ref, self.ADVERSARIAL_PNAME)
+        assert ref != self.ADVERSARIAL_PNAME
 
     def test_installed_pname_package_does_not_satisfy_request(self):
         installed_agg = '''{ pkgs, ... }: {
@@ -280,9 +266,8 @@ class TestRealNixpkgsAdversarialRegression(unittest.TestCase):
     agg
   ];
 }'''
-        self.assertFalse(
-            is_package_exists(installed_agg, self.ADVERSARIAL_ATTR, TP,
-                              source="stable"))
+        assert not is_package_exists(
+            installed_agg, self.ADVERSARIAL_ATTR, TP, source="stable")
 
     def test_installed_pname_package_does_not_collide(self):
         installed_agg = '''{ pkgs, ... }: {
@@ -290,8 +275,7 @@ class TestRealNixpkgsAdversarialRegression(unittest.TestCase):
     agg
   ];
 }'''
-        self.assertFalse(
-            is_package_name_taken(installed_agg, self.ADVERSARIAL_ATTR, TP))
+        assert not is_package_name_taken(installed_agg, self.ADVERSARIAL_ATTR, TP)
 
     def test_dedup_keeps_both_distinct_packages(self):
         pkgs = [
@@ -300,8 +284,4 @@ class TestRealNixpkgsAdversarialRegression(unittest.TestCase):
             Package(name="agg", version="1.9.0", description="d",
                     source="stable", type=None, attribute="asciinema-agg"),
         ]
-        self.assertEqual(len(deduplicate(pkgs)), 2)
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert len(deduplicate(pkgs)) == 2

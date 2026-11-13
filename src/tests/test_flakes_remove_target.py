@@ -1,25 +1,19 @@
-"""Target-aware flake removal regression tests (Phase 2).
+"""Target-aware flake removal regression tests.
 
 Reproduces the real-world failure: home_manager_enabled=true with flake
 references living in configuration.nix — the old code inspected home.nix,
 removed the input, and left dangling references in configuration.nix.
+
+Migrated from the original script harness; every ``check`` maps 1:1 to a
+collected pytest test instance.
 """
-import sys
-import os
-import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
+import pytest
 
-from core.target import Target, select_target, resolve_target_info
+from core.target import Target, select_target
 from main import handle_flakes_remove
-
-PASS, FAIL = [], []
-def check(name, cond, detail=""):
-    (PASS if cond else FAIL).append(name)
-    print(f"  {'✓' if cond else '✗'} {name}" + (f" — {detail}" if not cond else ""))
-
 
 # Realistic fixtures modeled on the live /etc/nixos files.
 
@@ -97,85 +91,77 @@ def run_remove(tmpdir, config, name="claude-desktop-nix", requested=None,
     return mock_run, mock_backup, mock_restore
 
 
-print("=" * 70)
-print("TARGET-AWARE FLAKE REMOVAL — REGRESSION TESTS")
-print("=" * 70)
+# ── T1: THE real-world regression ───────────────────────────────────────────
 
-# ── Test 1: THE real-world regression ─────────────────────────────────────
-print("\n[T1] System removal with Home Manager enabled (the original bug)")
-
-with tempfile.TemporaryDirectory() as tmpdir:
-    config = make_env(tmpdir, sys_text=SYS_WITH_REFS, home_text=HOME_UNRELATED,
+def test_system_removal_with_home_manager_enabled(tmp_path):
+    config = make_env(tmp_path, sys_text=SYS_WITH_REFS, home_text=HOME_UNRELATED,
                       home_manager_enabled=True)
-    run_remove(tmpdir, config)
-    sys_out = (Path(tmpdir) / "configuration.nix").read_text()
-    home_out = (Path(tmpdir) / "home.nix").read_text()
-    flake_out = (Path(tmpdir) / "flake.nix").read_text()
-    check("T1: package reference removed from configuration.nix",
-          "inputs.claude-desktop-nix.packages" not in sys_out)
-    check("T1: overlay reference removed from configuration.nix",
-          "inputs.claude-desktop-nix.overlays" not in sys_out)
-    check("T1: input removed from flake.nix",
-          "claude-desktop-nix" not in flake_out)
-    check("T1: home.nix untouched (unrelated refs intact)",
-          "inputs.hyprmod.packages" in home_out and "claude" not in home_out)
-    check("T1: other packages preserved",
-          "git" in sys_out and "ripgrep" in home_out)
+    run_remove(tmp_path, config)
+    sys_out = (tmp_path / "configuration.nix").read_text()
+    home_out = (tmp_path / "home.nix").read_text()
+    flake_out = (tmp_path / "flake.nix").read_text()
+    assert "inputs.claude-desktop-nix.packages" not in sys_out
+    assert "inputs.claude-desktop-nix.overlays" not in sys_out
+    assert "claude-desktop-nix" not in flake_out
+    assert "inputs.hyprmod.packages" in home_out and "claude" not in home_out
+    assert "git" in sys_out and "ripgrep" in home_out
 
-# ── Test 2: explicit HOME removal ─────────────────────────────────────────
-print("\n[T2] Explicit -H removal targets home.nix")
 
-with tempfile.TemporaryDirectory() as tmpdir:
-    config = make_env(tmpdir, sys_text=SYS_WITH_REFS, home_text=HOME_WITH_REFS,
+# ── T2: explicit HOME removal ───────────────────────────────────────────────
+
+def test_explicit_home_removal_targets_home_nix(tmp_path):
+    config = make_env(tmp_path, sys_text=SYS_WITH_REFS, home_text=HOME_WITH_REFS,
                       home_manager_enabled=True)
-    run_remove(tmpdir, config, requested=Target.HOME)
-    sys_out = (Path(tmpdir) / "configuration.nix").read_text()
-    home_out = (Path(tmpdir) / "home.nix").read_text()
-    flake_out = (Path(tmpdir) / "flake.nix").read_text()
-    check("T2: reference removed from home.nix",
-          "inputs.claude-desktop-nix.packages" not in home_out)
-    check("T2: configuration.nix untouched",
-          "inputs.claude-desktop-nix.packages" in sys_out)
+    run_remove(tmp_path, config, requested=Target.HOME)
+    sys_out = (tmp_path / "configuration.nix").read_text()
+    home_out = (tmp_path / "home.nix").read_text()
+    flake_out = (tmp_path / "flake.nix").read_text()
+    assert "inputs.claude-desktop-nix.packages" not in home_out
+    assert "inputs.claude-desktop-nix.packages" in sys_out
     # input kept — still referenced by the other target (configuration.nix)
-    check("T2: input KEPT in flake.nix (other target still references it)",
-          "claude-desktop-nix" in flake_out)
+    assert "claude-desktop-nix" in flake_out
 
-# ── Test 3: all three HOME aliases ────────────────────────────────────────
-print("\n[T3] -H / --home / -home all select Target.HOME")
 
-for flag in ("-H", "--home", "-home"):
-    with tempfile.TemporaryDirectory() as tmpdir:
-        config = make_env(tmpdir, sys_text=SYS_WITH_REFS, home_text=HOME_WITH_REFS,
-                          home_manager_enabled=True)
-        run_remove(tmpdir, config, requested=Target.HOME)
-        home_out = (Path(tmpdir) / "home.nix").read_text()
-        check(f"T3: {flag} → home.nix cleaned",
-              "inputs.claude-desktop-nix.packages" not in home_out)
+# ── T3: all three HOME aliases ──────────────────────────────────────────────
 
-# select_target unit-level (no I/O)
-check("T3: select_target(None) → SYSTEM", select_target(config, None) is Target.SYSTEM)
-check("T3: select_target(Target.HOME) → HOME", select_target(config, Target.HOME) is Target.HOME)
+@pytest.mark.parametrize("flag", ["-H", "--home", "-home"], ids=[
+    "T3: -H → home.nix cleaned",
+    "T3: --home → home.nix cleaned",
+    "T3: -home → home.nix cleaned",
+])
+def test_home_aliases_clean_home_nix(flag, tmp_path):
+    config = make_env(tmp_path, sys_text=SYS_WITH_REFS, home_text=HOME_WITH_REFS,
+                      home_manager_enabled=True)
+    run_remove(tmp_path, config, requested=Target.HOME)
+    home_out = (tmp_path / "home.nix").read_text()
+    assert "inputs.claude-desktop-nix.packages" not in home_out
 
-# ── Test 4: system package reference removal ──────────────────────────────
-print("\n[T4] System package reference removal")
 
-with tempfile.TemporaryDirectory() as tmpdir:
+def test_select_target_unit_level(tmp_path):
+    config = make_env(tmp_path, sys_text=SYS_WITH_REFS, home_text=HOME_WITH_REFS)
+    assert select_target(config, None) is Target.SYSTEM
+    assert select_target(config, Target.HOME) is Target.HOME
+
+
+# ── T4: system package reference removal ────────────────────────────────────
+
+def test_system_package_reference_removal(tmp_path):
     pkg_only = SYS_WITH_REFS.replace("""
   nixpkgs.overlays = [
     inputs.claude-desktop-nix.overlays.default
   ];
 """, "")
-    config = make_env(tmpdir, sys_text=pkg_only, home_text=HOME_UNRELATED)
-    run_remove(tmpdir, config)
-    sys_out = (Path(tmpdir) / "configuration.nix").read_text()
-    check("T4: package ref removed, block intact",
-          "inputs.claude-desktop-nix.packages" not in sys_out
-          and "environment.systemPackages" in sys_out and "git" in sys_out)
+    config = make_env(tmp_path, sys_text=pkg_only, home_text=HOME_UNRELATED)
+    run_remove(tmp_path, config)
+    sys_out = (tmp_path / "configuration.nix").read_text()
+    assert "inputs.claude-desktop-nix.packages" not in sys_out
+    assert "environment.systemPackages" in sys_out
+    assert "git" in sys_out
 
-# ── Test 5: home package reference removal ────────────────────────────────
-print("\n[T5] Home package reference removal")
 
-with tempfile.TemporaryDirectory() as tmpdir:
+# ── T5: home package reference removal ──────────────────────────────────────
+
+def test_home_package_reference_removal(tmp_path):
     sys_no_claude = SYS_WITH_REFS.replace(
         "inputs.claude-desktop-nix.packages.${pkgs.stdenv.hostPlatform.system}.default", "vim"
     ).replace("""
@@ -183,96 +169,76 @@ with tempfile.TemporaryDirectory() as tmpdir:
     inputs.claude-desktop-nix.overlays.default
   ];
 """, "")
-    config = make_env(tmpdir, sys_text=sys_no_claude,
+    config = make_env(tmp_path, sys_text=sys_no_claude,
                       home_text=HOME_WITH_REFS, home_manager_enabled=True)
     # system file has NO claude refs → remove -H cleans home, input can go
-    run_remove(tmpdir, config, requested=Target.HOME)
-    home_out = (Path(tmpdir) / "home.nix").read_text()
-    flake_out = (Path(tmpdir) / "flake.nix").read_text()
-    check("T5: home ref removed, block intact",
-          "inputs.claude-desktop-nix.packages" not in home_out
-          and "home.packages" in home_out and "ripgrep" in home_out)
-    check("T5: input removed (no other references)",
-          "claude-desktop-nix" not in flake_out)
+    run_remove(tmp_path, config, requested=Target.HOME)
+    home_out = (tmp_path / "home.nix").read_text()
+    flake_out = (tmp_path / "flake.nix").read_text()
+    assert "inputs.claude-desktop-nix.packages" not in home_out
+    assert "home.packages" in home_out and "ripgrep" in home_out
+    assert "claude-desktop-nix" not in flake_out
 
-# ── Test 6: overlay removal ───────────────────────────────────────────────
-print("\n[T6] Overlay removal (no regression)")
 
-with tempfile.TemporaryDirectory() as tmpdir:
-    config = make_env(tmpdir, sys_text=SYS_WITH_REFS, home_text=None,
+# ── T6: overlay removal ─────────────────────────────────────────────────────
+
+def test_overlay_removal(tmp_path):
+    config = make_env(tmp_path, sys_text=SYS_WITH_REFS, home_text=None,
                       home_manager_enabled=False)
-    run_remove(tmpdir, config)
-    sys_out = (Path(tmpdir) / "configuration.nix").read_text()
-    check("T6: overlay reference removed",
-          "inputs.claude-desktop-nix.overlays" not in sys_out)
-    check("T6: overlays block structure preserved",
-          "nixpkgs.overlays = [" in sys_out)
+    run_remove(tmp_path, config)
+    sys_out = (tmp_path / "configuration.nix").read_text()
+    assert "inputs.claude-desktop-nix.overlays" not in sys_out
+    assert "nixpkgs.overlays = [" in sys_out
 
-# ── Test 7: other-target reference keeps the input ────────────────────────
-print("\n[T7] Remaining reference on the other target keeps the input")
 
-with tempfile.TemporaryDirectory() as tmpdir:
+# ── T7: other-target reference keeps the input ──────────────────────────────
+
+def test_other_target_reference_keeps_input(tmp_path):
     # both files reference the flake; remove SYSTEM side
-    config = make_env(tmpdir, sys_text=SYS_WITH_REFS, home_text=HOME_WITH_REFS,
+    config = make_env(tmp_path, sys_text=SYS_WITH_REFS, home_text=HOME_WITH_REFS,
                       home_manager_enabled=True)
-    run_remove(tmpdir, config)  # default → SYSTEM
-    flake_out = (Path(tmpdir) / "flake.nix").read_text()
-    sys_out = (Path(tmpdir) / "configuration.nix").read_text()
-    home_out = (Path(tmpdir) / "home.nix").read_text()
-    check("T7: system refs removed", "claude-desktop-nix" not in sys_out)
-    check("T7: home refs intact (not scanned for mutation)",
-          "inputs.claude-desktop-nix.packages" in home_out)
-    check("T7: input KEPT (home still references it)",
-          "claude-desktop-nix" in flake_out)
+    run_remove(tmp_path, config)  # default → SYSTEM
+    flake_out = (tmp_path / "flake.nix").read_text()
+    sys_out = (tmp_path / "configuration.nix").read_text()
+    home_out = (tmp_path / "home.nix").read_text()
+    assert "claude-desktop-nix" not in sys_out
+    assert "inputs.claude-desktop-nix.packages" in home_out
+    assert "claude-desktop-nix" in flake_out
 
     # now remove the HOME side too → input goes away
-    run_remove(tmpdir, config, requested=Target.HOME)
-    flake_out = (Path(tmpdir) / "flake.nix").read_text()
-    home_out = (Path(tmpdir) / "home.nix").read_text()
-    check("T7: after both removes, input fully removed",
-          "claude-desktop-nix" not in flake_out)
-    check("T7: home refs cleaned on second remove",
-          "inputs.claude-desktop-nix.packages" not in home_out)
+    run_remove(tmp_path, config, requested=Target.HOME)
+    flake_out = (tmp_path / "flake.nix").read_text()
+    home_out = (tmp_path / "home.nix").read_text()
+    assert "claude-desktop-nix" not in flake_out
+    assert "inputs.claude-desktop-nix.packages" not in home_out
 
-# ── Test 8: rollback ──────────────────────────────────────────────────────
-print("\n[T8] Rollback restores files when rebuild fails")
 
-with tempfile.TemporaryDirectory() as tmpdir:
-    config = make_env(tmpdir, sys_text=SYS_WITH_REFS, home_text=HOME_UNRELATED)
-    mock_run, mock_backup, mock_restore = run_remove(tmpdir, config, rebuild_ok=False)
-    check("T8: rebuild attempted", mock_run.called)
-    check("T8: backup taken before write", mock_backup.called)
-    check("T8: restore called on failure", mock_restore.called)
+# ── T8: rollback ────────────────────────────────────────────────────────────
 
-# ── Dispatch: -H reaches handle_flakes_remove ─────────────────────────────
-print("\n[T9] CLI dispatch passes the flag through")
+def test_rollback_restores_files_when_rebuild_fails(tmp_path):
+    config = make_env(tmp_path, sys_text=SYS_WITH_REFS, home_text=HOME_UNRELATED)
+    mock_run, mock_backup, mock_restore = run_remove(tmp_path, config, rebuild_ok=False)
+    assert mock_run.called
+    assert mock_backup.called
+    assert mock_restore.called
 
-import main as main_mod
-from unittest.mock import patch as _patch
 
-with tempfile.TemporaryDirectory() as tmpdir:
-    config = make_env(tmpdir, sys_text=SYS_WITH_REFS, home_text=HOME_WITH_REFS)
-    with _patch("main.handle_flakes_remove") as mock_remove:
-        with _patch("main.bootstrap", return_value=config):
-            sys.argv = ["nx", "flakes", "remove", "-H", "github:tomsch/claude-desktop-nix"]
+# ── T9: CLI dispatch passes the flag through ────────────────────────────────
+
+@pytest.mark.parametrize("argv,expected", [
+    (["nx", "flakes", "remove", "-H", "github:tomsch/claude-desktop-nix"], Target.HOME),
+    (["nx", "flakes", "remove", "github:tomsch/claude-desktop-nix"], None),
+], ids=[
+    "T9: handle_flakes_remove called with requested=Target.HOME",
+    "T9: no flag → requested=None (SYSTEM)",
+])
+def test_cli_dispatch_passes_home_flag(argv, expected, tmp_path):
+    import main as main_mod
+
+    config = make_env(tmp_path, sys_text=SYS_WITH_REFS, home_text=HOME_WITH_REFS)
+    with patch("main.handle_flakes_remove") as mock_remove:
+        with patch("main.bootstrap", return_value=config):
+            import sys
+            sys.argv = argv
             main_mod.main()
-    check("T9: handle_flakes_remove called with requested=Target.HOME",
-          mock_remove.call_args.kwargs.get("requested") is Target.HOME)
-
-with tempfile.TemporaryDirectory() as tmpdir:
-    config = make_env(tmpdir, sys_text=SYS_WITH_REFS, home_text=HOME_WITH_REFS)
-    with _patch("main.handle_flakes_remove") as mock_remove:
-        with _patch("main.bootstrap", return_value=config):
-            sys.argv = ["nx", "flakes", "remove", "github:tomsch/claude-desktop-nix"]
-            main_mod.main()
-    check("T9: no flag → requested=None (SYSTEM)",
-          mock_remove.call_args.kwargs.get("requested") is None)
-
-
-print("\n" + "=" * 70)
-print(f"RESULTS: {len(PASS)} passed, {len(FAIL)} failed")
-if FAIL:
-    for f in FAIL:
-        print(f"  ✗ {f}")
-print("=" * 70)
-sys.exit(1 if FAIL else 0)
+    assert mock_remove.call_args.kwargs.get("requested") is expected

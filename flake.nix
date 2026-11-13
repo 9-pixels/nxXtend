@@ -5,7 +5,8 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   };
 
-  outputs = { self, nixpkgs }:
+  outputs =
+    { self, nixpkgs }:
     let
       systems = [
         "x86_64-linux"
@@ -15,7 +16,8 @@
       forAllSystems = nixpkgs.lib.genAttrs systems;
     in
     {
-      packages = forAllSystems (system:
+      packages = forAllSystems (
+        system:
         let
           pkgs = import nixpkgs {
             inherit system;
@@ -24,7 +26,7 @@
         {
           default = pkgs.python3Packages.buildPythonApplication {
             pname = "nxXtend";
-            version = "0.1.0";
+            version = "0.1.2";
 
             src = ./.;
 
@@ -40,9 +42,11 @@
               toml
             ];
           };
-        });
+        }
+      );
 
-      devShells = forAllSystems (system:
+      devShells = forAllSystems (
+        system:
         let
           pkgs = import nixpkgs {
             inherit system;
@@ -55,6 +59,7 @@
               pkgs.python3Packages.pytest
             ];
           };
-        });
+        }
+      );
     };
 }

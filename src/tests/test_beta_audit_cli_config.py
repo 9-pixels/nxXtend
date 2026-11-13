@@ -1,144 +1,121 @@
 """Beta audit 2/3 — CLI parsing, config state machine, and rollback safety.
 
-READ-ONLY audit: asserts CORRECT behavior; failures document bugs.
+READ-ONLY audit: asserts CORRECT behavior; the checks that fail are known
+defects and are pinned with ``pytest.mark.xfail(strict=True, ...)`` so a
+defect that gets fixed surfaces as an XPASS and fails the suite.
+
 All subprocess/handlers mocked — nothing real runs.
 """
-import sys
+import inspect
 import os
-import io
-import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
-from contextlib import redirect_stdout, redirect_stderr
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
+import pytest
+import toml
+
+from core import config as cfg
+from core.target import Target
+from core.writer import backup_files, restore_files
 
 import main as m
-from core.target import Target
-
-PASS, FAIL = [], []
-def check(name, cond, detail=""):
-    (PASS if cond else FAIL).append(name)
-    print(f"  {'✓' if cond else '✗'} {name}" + (f" — {detail}" if not cond else ""))
 
 
-CONFIG = {"setup": {
-    "configuration_path": "/tmp/x/configuration.nix",
-    "flake_enabled": True,
-    "flake_path": "/tmp/x/flake.nix",
-    "home_manager_enabled": True,
-    "home_manager_path": "/tmp/x/home.nix",
-    "unstable_variable": "unstable",
-}}
-
-
-def run_cli(argv):
-    calls = []
-    def rec(name):
-        def f(*a, **k):
-            calls.append((name, a, k))
-        return f
-    exit_code = None
-    try:
-        with patch("main.handle_install", side_effect=rec("install")), \
-             patch("main.handle_remove", side_effect=rec("remove")), \
-             patch("main.handle_upgrade", side_effect=rec("upgrade")), \
-             patch("main.handle_flakes_install", side_effect=rec("flakes_install")), \
-             patch("main.handle_flakes_remove", side_effect=rec("flakes_remove")), \
-             patch("main.handle_flakes_upgrade", side_effect=rec("flakes_upgrade")), \
-             patch("main.subprocess.run") as mock_sub, \
-             patch("main.bootstrap", return_value=CONFIG), \
-             redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-            mock_sub.return_value = MagicMock(returncode=0)
-            sys.argv = argv
-            m.main()
-    except SystemExit as e:
-        exit_code = e.code
-    return exit_code, calls, mock_sub
-
-
-print("=" * 70)
-print("BETA AUDIT 2/3 — CLI / CONFIG / ROLLBACK")
-print("=" * 70)
-
-# ── [A] CLI adversarial ────────────────────────────────────────────────────
-print("\n[A] CLI adversarial")
-
-code, calls, _ = run_cli(["nx", "install"])                       # missing name
-check("A1 install without name → argparse error exit 2", code == 2 and not calls, f"exit={code}")
-
-code, calls, _ = run_cli(["nx", "install", "a", "b"])             # extra arg
-check("A2 install with extra arg → exit 2", code == 2 and not calls, f"exit={code}")
-
-code, calls, _ = run_cli(["nx", "bogus"])
-check("A3 unknown command → exit 2", code == 2, f"exit={code}")
-
-code, calls, _ = run_cli(["nx", "-x"])
-check("A4 unknown flag → exit 2", code == 2, f"exit={code}")
-
-code, calls, _ = run_cli(["nx", "-i", "-i", "x"])
-check("A5 repeated -i → conflicting-ops error (not silent pick)", code == 2 and not calls,
-      f"exit={code} calls={calls}")
-
-code, calls, _ = run_cli(["nx", "-f", "-f", "github:x/y"])
-check("A6 repeated -f → accepted as single flakes op (idempotent flag)",
-      calls and calls[0][0] == "flakes_install", f"exit={code} calls={calls[:1]}")
-
-code, calls, _ = run_cli(["nx", "-f", "remove"])                  # remove w/o name
-check("A7 -f remove without name → help/exit, no handler", not calls, f"exit={code} calls={calls}")
-
-code, calls, _ = run_cli(["nx", "-f", "upgrade", "extra"])
-check("A8 -f upgrade + extra arg → clean rejection exit 2 (design: no subcommand after -f)",
-      code == 2 and not calls, f"exit={code} calls={calls}")
-
-code, calls, _ = run_cli(["nx", "flakes", "install"])             # install w/o url
-check("A9 flakes install without url → help, no handler", not calls, f"calls={calls}")
-
-code, calls, _ = run_cli(["nx", "flakes", "remove"])
-check("A10 flakes remove without name → help, no handler", not calls, f"calls={calls}")
-
-code, calls, _ = run_cli(["nx", "-f", "http://x"])
-check("A11 -f with non-github URL → help, no handler (URL prefix gate)",
-      not calls, f"calls={calls}")
-
-code, calls, _ = run_cli(["nx", "-H", "-i", "firefox"])
-check("A12 -H first with -i → install with HOME", 
-      calls == [("install", ("firefox", CONFIG), {"requested": Target.HOME})], f"calls={calls}")
-
-code, calls, _ = run_cli(["nx", "-u", "extra"])
-check("A13 -u with extra arg → clean rejection exit 2 (upgrade takes no positional)",
-      code == 2 and not calls, f"exit={code} calls={calls}")
-
-code, calls, _ = run_cli(["nx", "--home", "-u"])
-check("A14 --home -u → rejected (unsupported home upgrade)", code == 1 and not calls, f"exit={code}")
-
-code, calls, _ = run_cli(["nx", "-f", "-H", "-u"])
-check("A15 -f -H -u → rejected before execution", code == 1 and not calls, f"exit={code}")
-
-code, calls, _ = run_cli(["nx", "setup", "extra"])
-check("A16 setup with extra arg → exit 2", code == 2, f"exit={code}")
-
-# ── [B] Config state machine (sandboxed) ───────────────────────────────────
-print("\n[B] config validate_and_repair — sandboxed")
-
-import toml
-from core import config as cfg
-
-def sandbox_config(td, content=None, env=None):
-    """Point CONFIG_FILE at a sandbox; returns (orig_file, orig_dir)."""
+@pytest.fixture
+def sandbox_config(tmp_path):
+    """Point the module-level CONFIG_FILE/CONFIG_DIR at a sandbox."""
     orig_file, orig_dir = cfg.CONFIG_FILE, cfg.CONFIG_DIR
-    cfg.CONFIG_FILE = Path(td) / "config.toml"
-    cfg.CONFIG_DIR = Path(td)
-    if content is not None:
-        cfg.CONFIG_FILE.write_text(content)
-    return orig_file, orig_dir
+    cfg.CONFIG_FILE = tmp_path / "config.toml"
+    cfg.CONFIG_DIR = tmp_path
+    try:
+        yield cfg
+    finally:
+        cfg.CONFIG_FILE, cfg.CONFIG_DIR = orig_file, orig_dir
 
-def restore_config(orig_file, orig_dir):
-    cfg.CONFIG_FILE, cfg.CONFIG_DIR = orig_file, orig_dir
 
-# B1: valid config roundtrip preserves values
-with tempfile.TemporaryDirectory() as td:
-    of, od = sandbox_config(td, open_s := '''[setup]
+# ── [A] CLI adversarial ─────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("argv", [
+    ["nx", "install"],
+    ["nx", "install", "a", "b"],
+    ["nx", "-i", "-i", "x"],
+    ["nx", "-f", "upgrade", "extra"],
+    ["nx", "-u", "extra"],
+], ids=[
+    "A1 install without name → argparse error exit 2",
+    "A2 install with extra arg → exit 2",
+    "A5 repeated -i → conflicting-ops error (not silent pick)",
+    "A8 -f upgrade + extra arg → clean rejection exit 2 (design: no subcommand after -f)",
+    "A13 -u with extra arg → clean rejection exit 2 (upgrade takes no positional)",
+])
+def test_cli_exit_2_with_no_handler(argv, run_cli):
+    code, calls, _ = run_cli(argv)
+    assert code == 2, f"exit={code}"
+    assert not calls
+
+
+@pytest.mark.parametrize("argv", [
+    ["nx", "bogus"],
+    ["nx", "-x"],
+    ["nx", "setup", "extra"],
+], ids=[
+    "A3 unknown command → exit 2",
+    "A4 unknown flag → exit 2",
+    "A16 setup with extra arg → exit 2",
+])
+def test_cli_exit_2(argv, run_cli):
+    code, calls, _ = run_cli(argv)
+    assert code == 2, f"exit={code}"
+
+
+@pytest.mark.parametrize("argv", [
+    ["nx", "-f", "remove"],
+    ["nx", "flakes", "install"],
+    ["nx", "flakes", "remove"],
+], ids=[
+    "A7 -f remove without name → help/exit, no handler",
+    "A9 flakes install without url → help, no handler",
+    "A10 flakes remove without name → help, no handler",
+])
+def test_cli_no_handler_dispatched(argv, run_cli):
+    _, calls, _ = run_cli(argv)
+    assert not calls
+
+
+def test_repeated_flake_flag_is_idempotent(run_cli):
+    _, calls, _ = run_cli(["nx", "-f", "-f", "github:x/y"])
+    assert calls and calls[0][0] == "flakes_install"
+
+
+def test_non_github_url_is_routed_to_install(run_cli, cli_config):
+    # A11: the old URL-prefix gate rejected every non-github reference and
+    # fell through to parser.print_help(). The routing fix sends any
+    # unrecognised positional to the install path and lets Nix validate it.
+    _, calls, _ = run_cli(["nx", "-f", "http://x"])
+    assert calls == [("flakes_install", ("http://x", cli_config), {"requested": None})]
+
+
+def test_home_first_with_install(run_cli, cli_config):
+    _, calls, _ = run_cli(["nx", "-H", "-i", "firefox"])
+    assert calls == [("install", ("firefox", cli_config), {"requested": Target.HOME})]
+
+
+@pytest.mark.parametrize("argv", [
+    ["nx", "--home", "-u"],
+    ["nx", "-f", "-H", "-u"],
+], ids=[
+    "A14 --home -u → rejected (unsupported home upgrade)",
+    "A15 -f -H -u → rejected before execution",
+])
+def test_home_upgrade_rejected(argv, run_cli):
+    code, calls, _ = run_cli(argv)
+    assert code == 1, f"exit={code}"
+    assert not calls
+
+
+# ── [B] Config state machine (sandboxed) ────────────────────────────────────
+
+def test_valid_config_values_preserved(sandbox_config):
+    sandbox_config.CONFIG_FILE.write_text('''[setup]
 configuration_path = "/custom/configuration.nix"
 flake_enabled = true
 flake_path = "/custom/flake.nix"
@@ -148,31 +125,29 @@ unstable_variable = "u9"
 [meta]
 setup_done = true
 ''')
-    try:
-        cfg.validate_and_repair()
-        data = toml.loads(cfg.CONFIG_FILE.read_text())
-        check("B1 valid config: values preserved through repair",
-              data["setup"]["configuration_path"] == "/custom/configuration.nix"
-              and data["setup"]["unstable_variable"] == "u9"
-              and data["meta"]["setup_done"] is True)
-    finally:
-        restore_config(of, od)
+    sandbox_config.validate_and_repair()
+    data = toml.loads(sandbox_config.CONFIG_FILE.read_text())
+    assert data["setup"]["configuration_path"] == "/custom/configuration.nix"
+    assert data["setup"]["unstable_variable"] == "u9"
+    assert data["meta"]["setup_done"] is True
 
-# B2: TOML syntax error → silently reset to defaults (data loss?)
-with tempfile.TemporaryDirectory() as td:
-    of, od = sandbox_config(td, "!!!not toml at all [[[")
-    try:
-        cfg.validate_and_repair()
-        data = toml.loads(cfg.CONFIG_FILE.read_text())
-        check("B2 corrupted file → repaired to defaults (setup_done=false, safe)",
-              data["meta"]["setup_done"] is False
-              and data["setup"]["configuration_path"] == "/etc/nixos/configuration.nix")
-    finally:
-        restore_config(of, od)
 
-# B3: user-added custom keys — preserved or dropped?
-with tempfile.TemporaryDirectory() as td:
-    of, od = sandbox_config(td, '''[setup]
+def test_corrupted_file_repaired_to_defaults(sandbox_config):
+    sandbox_config.CONFIG_FILE.write_text("!!!not toml at all [[[")
+    sandbox_config.validate_and_repair()
+    data = toml.loads(sandbox_config.CONFIG_FILE.read_text())
+    assert data["meta"]["setup_done"] is False
+    assert data["setup"]["configuration_path"] == "/etc/nixos/configuration.nix"
+
+
+@pytest.mark.known_issue
+@pytest.mark.xfail(
+    strict=True,
+    reason="B3 known defect: validate_and_repair() rebuilds the file from "
+           "CONFIG_TEMPLATE, so user-added keys under [future] (and any other "
+           "non-template section) are silently dropped instead of preserved.")
+def test_user_keys_preserved_through_repair(sandbox_config):
+    sandbox_config.CONFIG_FILE.write_text('''[setup]
 configuration_path = "/etc/nixos/configuration.nix"
 flake_enabled = true
 flake_path = "/etc/nixos/flake.nix"
@@ -185,18 +160,13 @@ custom_note = "keep me"
 [meta]
 setup_done = true
 ''')
-    try:
-        cfg.validate_and_repair()
-        text = cfg.CONFIG_FILE.read_text()
-        check("B3 user keys in [future] preserved through repair",
-              "remote_registry" in text and "keep me" in text,
-              "repair rewrites from template — custom keys dropped")
-    finally:
-        restore_config(of, od)
+    sandbox_config.validate_and_repair()
+    text = sandbox_config.CONFIG_FILE.read_text()
+    assert "remote_registry" in text and "keep me" in text
 
-# B4: invalid types repaired to defaults
-with tempfile.TemporaryDirectory() as td:
-    of, od = sandbox_config(td, '''[setup]
+
+def test_invalid_values_repaired_to_defaults(sandbox_config):
+    sandbox_config.CONFIG_FILE.write_text('''[setup]
 configuration_path = ""
 flake_enabled = "yes"
 flake_path = 123
@@ -206,83 +176,99 @@ unstable_variable = "with space"
 [meta]
 setup_done = "yes"
 ''')
+    sandbox_config.validate_and_repair()
+    data = toml.loads(sandbox_config.CONFIG_FILE.read_text())
+    s = data["setup"]
+    assert s["configuration_path"] == "/etc/nixos/configuration.nix"
+    assert s["flake_enabled"] is False
+    assert isinstance(s["flake_path"], str)
+    assert s["unstable_variable"] == "unstable"
+    assert data["meta"]["setup_done"] is False
+
+
+def test_config_dir_derives_from_sudo_user(monkeypatch):
+    """B5: CONFIG_DIR must follow SUDO_USER, falling back to USER.
+
+    The harness version of this check was a tautological label; this version
+    actually reloads the module under controlled environment variables and
+    restores the original state afterwards.
+    """
+    import importlib
+
+    orig_sudo = os.environ.get("SUDO_USER")
+    orig_user = os.environ.get("USER")
     try:
-        cfg.validate_and_repair()
-        data = toml.loads(cfg.CONFIG_FILE.read_text())
-        s = data["setup"]
-        check("B4 invalid values repaired to defaults",
-              s["configuration_path"] == "/etc/nixos/configuration.nix"
-              and s["flake_enabled"] is False
-              and isinstance(s["flake_path"], str)
-              and s["unstable_variable"] == "unstable"
-              and data["meta"]["setup_done"] is False)
+        monkeypatch.setenv("SUDO_USER", "alice")
+        monkeypatch.delenv("USER", raising=False)
+        importlib.reload(cfg)
+        assert cfg.CONFIG_DIR == Path("/home/alice/.config/nx")
+
+        monkeypatch.delenv("SUDO_USER")
+        monkeypatch.setenv("USER", "bob")
+        importlib.reload(cfg)
+        assert cfg.CONFIG_DIR == Path("/home/bob/.config/nx")
     finally:
-        restore_config(of, od)
+        if orig_sudo is None:
+            os.environ.pop("SUDO_USER", None)
+        else:
+            os.environ["SUDO_USER"] = orig_sudo
+        if orig_user is None:
+            os.environ.pop("USER", None)
+        else:
+            os.environ["USER"] = orig_user
+        importlib.reload(cfg)
 
-# B5: SUDO_USER config path derivation
-check("B5 CONFIG_DIR derives from SUDO_USER when set",
-      True, "informational: _user = SUDO_USER or USER → /home/<user>/.config/nx")
 
-# ── [C] Rollback safety ────────────────────────────────────────────────────
-print("\n[C] rollback / backup safety (sandboxed files)")
+# ── [C] Rollback safety ─────────────────────────────────────────────────────
 
-from core.writer import backup_files, restore_files
+def test_backup_restore_roundtrip(tmp_path):
+    f1 = tmp_path / "a.nix"
+    f1.write_text("A-content")
+    f2 = tmp_path / "b.nix"
+    f2.write_text("B-content")
+    backup_files([f1, f2], backup_dir=tmp_path / "bk")
+    f1.write_text("A-mangled")
+    f2.write_text("B-mangled")
+    restore_files([f1, f2], backup_dir=tmp_path / "bk")
+    assert f1.read_text() == "A-content"
+    assert f2.read_text() == "B-content"
 
-with tempfile.TemporaryDirectory() as td:
-    f1 = Path(td) / "a.nix"; f1.write_text("A-content")
-    f2 = Path(td) / "b.nix"; f2.write_text("B-content")
-    backup_files([f1, f2], backup_dir=Path(td) / "bk")
-    f1.write_text("A-mangled"); f2.write_text("B-mangled")
-    restore_files([f1, f2], backup_dir=Path(td) / "bk")
-    check("C1 backup+restore roundtrip restores both files",
-          f1.read_text() == "A-content" and f2.read_text() == "B-content")
 
-with tempfile.TemporaryDirectory() as td:
-    f1 = Path(td) / "a.nix"; f1.write_text("A-content")
-    backup_files([f1], backup_dir=Path(td) / "bk")
+def test_second_backup_overwrites_first(tmp_path):
+    f1 = tmp_path / "a.nix"
+    f1.write_text("A-content")
+    backup_files([f1], backup_dir=tmp_path / "bk")
     f1.write_text("A-mangled")
     # second transaction overwrites the backup with MANGLED content
-    backup_files([f1], backup_dir=Path(td) / "bk")
+    backup_files([f1], backup_dir=tmp_path / "bk")
     f1.write_text("A-worse")
-    restore_files([f1], backup_dir=Path(td) / "bk")
-    check("C2 second backup overwrites first (single-slot backup)",
-          f1.read_text() == "A-mangled",
-          "restored the MANGLED intermediate — prior good state lost (documented design)")
+    restore_files([f1], backup_dir=tmp_path / "bk")
+    # Documented design: the single backup slot holds the MANGLED intermediate,
+    # so the prior good state is lost.
+    assert f1.read_text() == "A-mangled"
 
-with tempfile.TemporaryDirectory() as td:
-    f1 = Path(td) / "a.nix"; f1.write_text("A-content")
-    # default backup dir is /etc/nixos/.nx-backup — CANNOT test without touching /etc;
-    # verify the default path constant instead
-    import inspect
+
+def test_default_backup_dir_is_hardcoded():
     from core import writer as w
     src = inspect.getsource(w.backup_files)
-    check("C3 default backup dir hardcoded to /etc/nixos/.nx-backup",
-          "/etc/nixos/.nx-backup" in src, "informational — sandboxed runs use explicit dir")
+    assert "/etc/nixos/.nx-backup" in src
 
-# C4: same-basename collision — home.nix and configuration.nix in DIFFERENT dirs
-with tempfile.TemporaryDirectory() as td:
-    d1, d2 = Path(td) / "sys", Path(td) / "home"
-    d1.mkdir(); d2.mkdir()
-    f1 = d1 / "configuration.nix"; f1.write_text("SYS")
-    f2 = d2 / "configuration.nix"; f2.write_text("HOME-DIR")
-    backup_files([f1, f2], backup_dir=Path(td) / "bk")
-    check("C4 same-basename files in one backup dir collide (flat backup)",
-          (Path(td) / "bk" / "configuration.nix").read_text() == "HOME-DIR",
-          "second file overwrites first in flat backup dir — latent for split configs")
 
-# ── [D] handle_upgrade rebuild-dir derivation (informational) ─────────────
-print("\n[D] upgrade rebuild dir")
+def test_same_basename_files_collide_in_flat_backup(tmp_path):
+    d1, d2 = tmp_path / "sys", tmp_path / "home"
+    d1.mkdir()
+    d2.mkdir()
+    f1 = d1 / "configuration.nix"
+    f1.write_text("SYS")
+    f2 = d2 / "configuration.nix"
+    f2.write_text("HOME-DIR")
+    backup_files([f1, f2], backup_dir=tmp_path / "bk")
+    assert (tmp_path / "bk" / "configuration.nix").read_text() == "HOME-DIR"
 
-import inspect
-src = inspect.getsource(m.handle_upgrade)
-check("D1 upgrade derives flake dir from configuration_path.parent",
-      "configuration_path" in src and "flake_path" not in src,
-      "informational — duplicated path knowledge (audit phase-3 finding)")
 
-print("\n" + "=" * 70)
-print(f"RESULTS: {len(PASS)} passed, {len(FAIL)} failed (failures = findings)")
-if FAIL:
-    for f in FAIL:
-        print(f"  ✗ FINDING: {f}")
-print("=" * 70)
-sys.exit(0)
+# ── [D] handle_upgrade rebuild-dir derivation (informational) ───────────────
+
+def test_upgrade_derives_flake_dir_from_configuration_path():
+    src = inspect.getsource(m.handle_upgrade)
+    assert "configuration_path" in src
+    assert "flake_path" not in src

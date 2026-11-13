@@ -1,55 +1,32 @@
-"""Beta audit — writer adversarial tests (READ-ONLY audit: asserts CORRECT
-behavior; a failed check here documents a bug, not a test error).
+"""Beta audit 1/3 — writer adversarial tests.
+
+READ-ONLY audit: asserts CORRECT behavior; a failed check here documents a
+bug, not a test error. Currently every check passes.
 
 Covers: silent no-op paths, format detection, formatting preservation,
 duplicates, removal, external imports, malformed input, boundary sizes,
 and a formatting-variation property check.
 """
-import sys
-import os
+import inspect
 import time
-import tempfile
 from pathlib import Path
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
+import pytest
 
-from core.writer import (
-    add_package, remove_package, is_package_exists, detect_format,
-    add_package_with_pkgs,
-)
+from core.writer import add_package, remove_package
 
 SYSTEM = "environment.systemPackages"
 HOME = "home.packages"
 
-PASS, FAIL = [], []
-def check(name, cond, detail=""):
-    (PASS if cond else FAIL).append(name)
-    print(f"  {'✓' if cond else '✗'} {name}" + (f" — {detail}" if not cond else ""))
 
+# ── [A] Silent no-op paths (critical correctness property) ──────────────────
 
-print("=" * 70)
-print("BETA AUDIT 1/3 — WRITER")
-print("=" * 70)
-
-# ── [A] Silent no-op paths (critical correctness property) ─────────────────
-print("\n[A] add_package must never report success without adding")
-
-# A1: genuinely empty HOME block, nothing else in file
-A1 = '{ pkgs, ... }:\n{\n  home.packages = [ ];\n}\n'
-r = add_package(A1, "htop", Path("/tmp"), HOME)
-check("A1 empty home.packages: success ⇒ htop present",
-      r.status != "success" or "htop" in r.content,
-      f"status={r.status}, added={'htop' in r.content}")
-
-# A2: genuinely empty SYSTEM block
-A2 = '{ pkgs, ... }:\n{\n  environment.systemPackages = [ ];\n}\n'
-r = add_package(A2, "htop", Path("/tmp"), SYSTEM)
-check("A2 empty systemPackages: success ⇒ htop present",
-      r.status != "success" or "htop" in r.content,
-      f"status={r.status}, added={'htop' in r.content}")
-
-# A3: DOTALL cross-block false detection — HOME plain block + with pkgs LATER
-A3 = '''{ pkgs, ... }:
+@pytest.mark.parametrize("content,block,predicate", [
+    ('{ pkgs, ... }:\n{\n  home.packages = [ ];\n}\n', HOME,
+     lambda r: "htop" in r.content),
+    ('{ pkgs, ... }:\n{\n  environment.systemPackages = [ ];\n}\n', SYSTEM,
+     lambda r: "htop" in r.content),
+    ('''{ pkgs, ... }:
 {
   home.packages = [
     pkgs.git
@@ -58,15 +35,8 @@ A3 = '''{ pkgs, ... }:
     vim
   ];
 }
-'''
-r = add_package(A3, "htop", Path("/tmp"), HOME)
-in_home_block = "htop" in r.content
-check("A3 home plain + later 'with pkgs': success ⇒ htop added",
-      r.status != "success" or in_home_block,
-      f"status={r.status}, added={in_home_block}")
-
-# A4: reverse — SYSTEM plain block + with pkgs later (in home block)
-A4 = '''{ pkgs, ... }:
+''', HOME, lambda r: "htop" in r.content),
+    ('''{ pkgs, ... }:
 {
   environment.systemPackages = [
     pkgs.vim
@@ -75,38 +45,37 @@ A4 = '''{ pkgs, ... }:
     git
   ];
 }
-'''
-r = add_package(A4, "htop", Path("/tmp"), SYSTEM)
-check("A4 system plain + later 'with pkgs': success ⇒ htop added",
-      r.status != "success" or "htop" in r.content,
-      f"status={r.status}, added={'htop' in r.content}")
-
-# A5: block name only inside a comment (no real block)
-A5 = '{ pkgs, ... }:\n{\n  # home.packages is managed manually\n  home.username = "u";\n}\n'
-r = add_package(A5, "htop", Path("/tmp"), HOME)
-check("A5 comment-only mention: no silent success without a real block",
-      r.status != "success" or ("home.packages = " in r.content and "htop" in r.content),
-      f"status={r.status}, content_changed={r.content != A5}")
-
-# A6: comment mimicking a block placed BEFORE the real block
-A6 = '''{ pkgs, ... }:
+''', SYSTEM, lambda r: "htop" in r.content),
+    ('{ pkgs, ... }:\n{\n  # home.packages is managed manually\n  home.username = "u";\n}\n',
+     HOME, lambda r: "home.packages = " in r.content and "htop" in r.content),
+    ('''{ pkgs, ... }:
 {
   # environment.systemPackages = [ old-style ]
   environment.systemPackages = with pkgs; [
     git
   ];
 }
-'''
-r = add_package(A6, "htop", Path("/tmp"), SYSTEM)
-real_block_touched = "htop" in r.content and "# environment.systemPackages = [ old-style htop" not in r.content
-check("A6 decoy comment block: insertion must hit the REAL block",
-      r.status != "success" or real_block_touched,
-      f"status={r.status}, decoy_corrupted={'old-style' in r.content and 'htop ]' in r.content and 'with pkgs' not in r.content.split(']')[0]}")
+''', SYSTEM,
+     lambda r: "htop" in r.content
+     and "# environment.systemPackages = [ old-style htop" not in r.content),
+], ids=[
+    "A1 empty home.packages: success ⇒ htop present",
+    "A2 empty systemPackages: success ⇒ htop present",
+    "A3 home plain + later 'with pkgs': success ⇒ htop added",
+    "A4 system plain + later 'with pkgs': success ⇒ htop added",
+    "A5 comment-only mention: no silent success without a real block",
+    "A6 decoy comment block: insertion must hit the REAL block",
+])
+def test_add_package_never_reports_success_without_adding(content, block, predicate):
+    r = add_package(content, "htop", Path("/tmp"), block)
+    assert r.status != "success" or predicate(r), \
+        f"status={r.status}, added={predicate(r)}"
 
-# ── [B] Formatting preservation ────────────────────────────────────────────
-print("\n[B] formatting preservation")
 
-B1 = '''{ pkgs, ... }:
+# ── [B] Formatting preservation ─────────────────────────────────────────────
+
+def test_comment_inside_block_preserved():
+    b1 = '''{ pkgs, ... }:
 {
   environment.systemPackages = with pkgs; [
     git   # vcs
@@ -114,137 +83,138 @@ B1 = '''{ pkgs, ... }:
   ];
 }
 '''
-r = add_package(B1, "htop", Path("/tmp"), SYSTEM)
-check("B1 comment inside block preserved", r.status == "success" and "# vcs" in r.content)
-check("B1 existing entries preserved", "git" in r.content and "vim" in r.content)
+    r = add_package(b1, "htop", Path("/tmp"), SYSTEM)
+    assert r.status == "success" and "# vcs" in r.content
+    assert "git" in r.content and "vim" in r.content
 
-B2 = '{ pkgs, ... }:\n{\n\thome.packages = with pkgs; [\n\t\tgit\n\t];\n}\n'
-r = add_package(B2, "htop", Path("/tmp"), HOME)
-check("B2 tab indentation: added with matching indent",
-      r.status == "success" and "\t\thtop" in r.content, repr(r.content[:80]))
 
-# ── [C] Duplicates ─────────────────────────────────────────────────────────
-print("\n[C] duplicate handling")
+def test_tab_indentation_matched():
+    b2 = '{ pkgs, ... }:\n{\n\thome.packages = with pkgs; [\n\t\tgit\n\t];\n}\n'
+    r = add_package(b2, "htop", Path("/tmp"), HOME)
+    assert r.status == "success" and "\t\thtop" in r.content, repr(r.content[:80])
 
-C1 = '{ pkgs, ... }:\n{\n  environment.systemPackages = with pkgs; [\n    git\n  ];\n}\n'
-r1 = add_package(C1, "git", Path("/tmp"), SYSTEM)
-r2 = add_package(r1.content, "git", Path("/tmp"), SYSTEM)
-count = r2.content.count("git")
-check("C1 adding an existing package must not duplicate it",
-      r2.status != "success" or count == 1,
-      f"status={r2.status}, occurrences={count}")
 
-# ── [D] Removal ────────────────────────────────────────────────────────────
-print("\n[D] removal")
+# ── [C] Duplicates ──────────────────────────────────────────────────────────
 
-D1 = '{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    git\n    vim\n  ];\n}\n'
-out, found = remove_package(D1, "git", Path("/tmp"), HOME)
-check("D1 remove existing: found, others kept",
-      found and "git" not in out and "vim" in out)
+def test_adding_existing_package_does_not_duplicate():
+    c1 = '{ pkgs, ... }:\n{\n  environment.systemPackages = with pkgs; [\n    git\n  ];\n}\n'
+    r1 = add_package(c1, "git", Path("/tmp"), SYSTEM)
+    r2 = add_package(r1.content, "git", Path("/tmp"), SYSTEM)
+    count = r2.content.count("git")
+    assert r2.status != "success" or count == 1, \
+        f"status={r2.status}, occurrences={count}"
 
-out, found = remove_package(D1, "nonexistent", Path("/tmp"), HOME)
-check("D2 remove nonexistent: not found, content unchanged",
-      not found and out == D1)
 
-out, found = remove_package(D1.replace("git", "pkgs.git"), "git", Path("/tmp"), HOME)
-check("D3 pkgs.-prefixed line removable by bare name",
-      found and "pkgs.git" not in out)
+# ── [D] Removal ─────────────────────────────────────────────────────────────
 
-D4 = D1.replace("    git", "    git # note")
-out, found = remove_package(D4, "git", Path("/tmp"), HOME)
-check("D4 line with trailing comment removable",
-      found, "commented-line removal (record actual behavior)")
+def test_remove_existing_keeps_others():
+    d1 = '{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    git\n    vim\n  ];\n}\n'
+    out, found = remove_package(d1, "git", Path("/tmp"), HOME)
+    assert found and "git" not in out and "vim" in out
 
-# ── [E] External imports ───────────────────────────────────────────────────
-print("\n[E] external import handling (Beta contract: unsupported_external)")
 
-with tempfile.TemporaryDirectory() as td:
-    (Path(td) / "pkgs.nix").write_text(
+def test_remove_nonexistent_unchanged():
+    d1 = '{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    git\n    vim\n  ];\n}\n'
+    out, found = remove_package(d1, "nonexistent", Path("/tmp"), HOME)
+    assert not found and out == d1
+
+
+def test_remove_pkgs_prefixed_line_by_bare_name():
+    d1 = '{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    git\n    vim\n  ];\n}\n'
+    out, found = remove_package(d1.replace("git", "pkgs.git"), "git", Path("/tmp"), HOME)
+    assert found and "pkgs.git" not in out
+
+
+def test_remove_line_with_trailing_comment():
+    d1 = '{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    git\n    vim\n  ];\n}\n'
+    d4 = d1.replace("    git", "    git # note")
+    out, found = remove_package(d4, "git", Path("/tmp"), HOME)
+    assert found
+
+
+# ── [E] External imports ────────────────────────────────────────────────────
+
+def test_external_import_unsupported_and_untouched(tmp_path):
+    (tmp_path / "pkgs.nix").write_text(
         '{\n  environment.systemPackages = with pkgs; [\n    git\n  ];\n}\n')
     host = '{ pkgs, ... }:\n{\n  environment.systemPackages = import ./pkgs.nix;\n}\n'
-    r = add_package(host, "htop", Path(td), SYSTEM)
-    ext = (Path(td) / "pkgs.nix").read_text()
-    check("E1 external import: unsupported_external, host unchanged, external file untouched",
-          r.status == "unsupported_external" and r.content == host and "htop" not in ext,
-          f"status={r.status}, host_changed={r.content != host}, ext_has_htop={'htop' in ext}")
+    r = add_package(host, "htop", tmp_path, SYSTEM)
+    ext = (tmp_path / "pkgs.nix").read_text()
+    assert r.status == "unsupported_external"
+    assert r.content == host
+    assert "htop" not in ext
 
-with tempfile.TemporaryDirectory() as td:
-    sub = Path(td) / "sub"; sub.mkdir()
+
+def test_relative_parent_import_unsupported_and_untouched(tmp_path):
+    sub = tmp_path / "sub"
+    sub.mkdir()
     (sub / "pkgs.nix").write_text(
         '{\n  environment.systemPackages = with pkgs; [\n    git\n  ];\n}\n')
     host = '{ pkgs, ... }:\n{\n  environment.systemPackages = import ../sub/pkgs.nix;\n}\n'
-    try:
-        r = add_package(host, "htop", Path(td), SYSTEM)
-        ext = (sub / "pkgs.nix").read_text()
-        check("E2 ../ relative import: unsupported_external, nothing modified",
-              r.status == "unsupported_external" and r.content == host and "htop" not in ext,
-              f"status={r.status}, ext_has_htop={'htop' in ext}")
-    except Exception as e:
-        check("E2 ../ relative import: unsupported_external, nothing modified", False, f"{type(e).__name__}: {e}")
+    r = add_package(host, "htop", tmp_path, SYSTEM)
+    ext = (sub / "pkgs.nix").read_text()
+    assert r.status == "unsupported_external"
+    assert r.content == host
+    assert "htop" not in ext
 
-# ── [F] Malformed input ────────────────────────────────────────────────────
-print("\n[F] malformed input")
 
-F1 = '{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    git\n}\n'  # unclosed [
-r = add_package(F1, "htop", Path("/tmp"), HOME)
-check("F1 unclosed bracket: must not report clean success",
-      r.status != "success" or r.content == F1,
-      f"status={r.status}, mangled={r.content != F1}")
+# ── [F] Malformed input ─────────────────────────────────────────────────────
 
-F2 = ""  # empty file
-r = add_package(F2, "htop", Path("/tmp"), HOME)
-check("F2 empty file: must not report clean success",
-      r.status != "success" or r.content.strip() != "",
-      f"status={r.status}, produced={r.content!r:.60}")
+def test_unclosed_bracket_not_clean_success():
+    f1 = '{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    git\n}\n'
+    r = add_package(f1, "htop", Path("/tmp"), HOME)
+    assert r.status != "success" or r.content == f1, \
+        f"status={r.status}, mangled={r.content != f1}"
 
-# ── [G] Boundary size ──────────────────────────────────────────────────────
-print("\n[G] boundary size")
 
-many = ", ".join(f"p{i}" for i in range(1000))
-G1 = '{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    ' + many + '\n  ];\n}\n'
-t0 = time.time()
-r = add_package(G1, "htop", Path("/tmp"), HOME)
-out, found = remove_package(r.content, "htop", Path("/tmp"), HOME)
-dt = time.time() - t0
-check(f"G1 1000-package block add+remove < 2s (took {dt:.2f}s)",
-      found and dt < 2.0 and "p999" in out)
+def test_empty_file_not_clean_success():
+    r = add_package("", "htop", Path("/tmp"), HOME)
+    assert r.status != "success" or r.content.strip() != "", \
+        f"status={r.status}, produced={r.content!r:.60}"
 
-# ── [H] Formatting-variation property ─────────────────────────────────────
-print("\n[H] property: success ⇒ reference present (formatting variations)")
 
-violations = []
-variants = {
-    "2-space-indent": '{ pkgs, ... }:\n{\n  home.packages = [ ];\n}\n',
-    "4-space-indent": '{ pkgs, ... }:\n    {\n    home.packages = [ ];\n    }\n',
-    "no-spaces": '{pkgs,...}:{home.packages=[];}',
-    "newline-in-list": '{ pkgs, ... }:\n{\n  home.packages = [\n\n  ];\n}\n',
-    "trailing-space-eq": '{ pkgs, ... }:\n{\n  home.packages  =  [ ];\n}\n',
-    "block-last-no-nl": '{ pkgs, ... }:\n{\n  home.packages = [ ];\n}',
-    "with-pkgs-same-line": '{ pkgs, ... }:\n{\n  home.packages = with pkgs; [ git ];\n}\n',
-    "comment-above-block": '{ pkgs, ... }:\n{\n  # packages\n  home.packages = [ ];\n}\n',
-}
-for label, content in variants.items():
+# ── [G] Boundary size ───────────────────────────────────────────────────────
+
+def test_thousand_package_block_add_and_remove_under_two_seconds():
+    many = ", ".join(f"p{i}" for i in range(1000))
+    g1 = '{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    ' + many + '\n  ];\n}\n'
+    t0 = time.time()
+    r = add_package(g1, "htop", Path("/tmp"), HOME)
+    out, found = remove_package(r.content, "htop", Path("/tmp"), HOME)
+    dt = time.time() - t0
+    assert found and dt < 2.0 and "p999" in out, f"took {dt:.2f}s"
+
+
+# ── [H] Formatting-variation property ──────────────────────────────────────
+
+@pytest.mark.parametrize("label,content", [
+    ("2-space-indent", '{ pkgs, ... }:\n{\n  home.packages = [ ];\n}\n'),
+    ("4-space-indent", '{ pkgs, ... }:\n    {\n    home.packages = [ ];\n    }\n'),
+    ("no-spaces", '{pkgs,...}:{home.packages=[];}'),
+    ("newline-in-list", '{ pkgs, ... }:\n{\n  home.packages = [\n\n  ];\n}\n'),
+    ("trailing-space-eq", '{ pkgs, ... }:\n{\n  home.packages  =  [ ];\n}\n'),
+    ("block-last-no-nl", '{ pkgs, ... }:\n{\n  home.packages = [ ];\n}'),
+    ("with-pkgs-same-line", '{ pkgs, ... }:\n{\n  home.packages = with pkgs; [ git ];\n}\n'),
+    ("comment-above-block", '{ pkgs, ... }:\n{\n  # packages\n  home.packages = [ ];\n}\n'),
+], ids=[
+    "2-space-indent",
+    "4-space-indent",
+    "no-spaces",
+    "newline-in-list",
+    "trailing-space-eq",
+    "block-last-no-nl",
+    "with-pkgs-same-line",
+    "comment-above-block",
+])
+def test_no_silent_noop_across_formatting_variations(label, content):
     r = add_package(content, "htop", Path("/tmp"), HOME)
-    ok = r.status != "success" or "htop" in r.content
-    if not ok:
-        violations.append(label)
-    print(f"    {'✓' if ok else '✗'} {label}: status={r.status} added={'htop' in r.content}")
-check("H1 zero silent-no-op violations across variations",
-      not violations, f"violations: {violations}")
+    assert r.status != "success" or "htop" in r.content, \
+        f"{label}: status={r.status} added={'htop' in r.content}"
 
-# ── [I] Dead-code evidence (informational) ────────────────────────────────
-print("\n[I] dead code (informational)")
 
-import inspect
-src = inspect.getsource(add_package)
-check("I1 'empty' never reaches a handler — rejected at the support gate",
-      "add_package_empty(" not in src and "unsupported_" in src,
-      "empty must map to unsupported_empty, not to any insertion handler")
+# ── [I] Dead-code evidence (informational) ──────────────────────────────────
 
-print("\n" + "=" * 70)
-print(f"RESULTS: {len(PASS)} passed, {len(FAIL)} failed (failures = findings)")
-if FAIL:
-    for f in FAIL:
-        print(f"  ✗ FINDING: {f}")
-print("=" * 70)
-sys.exit(0)  # audit harness: always exit 0; findings live in the report
+def test_empty_never_reaches_a_handler():
+    src = inspect.getsource(add_package)
+    assert "add_package_empty(" not in src
+    assert "unsupported_" in src

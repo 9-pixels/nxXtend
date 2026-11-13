@@ -1,6 +1,3 @@
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
 from flakes.planner import build_plan
 from flakes.models import FlakeSource, FlakeOutput
@@ -60,32 +57,3 @@ def test_unknown_type_unsupported():
     output = FlakeOutput(name="unknown", type="customType", attribute="customType.unknown")
     plan = build_plan(source, output, "x86_64-linux")
     assert plan.action == "unsupported"
-
-
-if __name__ == "__main__":
-    tests = [
-        test_packages_install,
-        test_legacy_packages_install,
-        test_nixos_modules_configure,
-        test_home_manager_modules_configure_home,
-        test_overlays_overlay,
-        test_apps_unsupported,
-        test_devshells_unsupported,
-        test_unknown_type_unsupported,
-    ]
-    passed = 0
-    failed = 0
-    for t in tests:
-        try:
-            t()
-            print(f"  ✓ {t.__name__}")
-            passed += 1
-        except AssertionError as e:
-            print(f"  ✗ {t.__name__}: {e}")
-            failed += 1
-        except Exception as e:
-            print(f"  ✗ {t.__name__}: {type(e).__name__}: {e}")
-            failed += 1
-    print(f"\n  {passed} passed, {failed} failed")
-    if failed:
-        sys.exit(1)

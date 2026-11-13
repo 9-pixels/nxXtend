@@ -3,7 +3,7 @@
 <h1>nx</h1>
 
 [![License](https://img.shields.io/github/license/9-pixels/nxXtend)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-551%20passing-success)](#testing)
+[![Tests](https://img.shields.io/badge/tests-530%20passing-success)](#testing)
 [![Python](https://img.shields.io/badge/Python-3.x-blue?logo=python)](https://www.python.org/)
 [![NixOS](https://img.shields.io/badge/NixOS-supported-5277C3?logo=nixos)](https://nixos.org/)
 [<img src="https://devin.ai/assets/askdeepwiki.png" alt="Ask DeepWiki" height="20"/>](https://deepwiki.com/9-pixels/nxXtend)
@@ -528,124 +528,94 @@ The configuration template also contains sections reserved for future features. 
 <details>
 <summary><h2>Testing</h2></summary>
 
-`nx` currently has a test suite covering its core components and workflows.
+`nx` has a unified test suite built on **pytest**. Every test is collected by a
+single command; there are no separate harness runners.
 
 ### Running the tests
 
-The suite is a mix of two styles and needs **both** the repository root and `src/`
-on `PYTHONPATH`:
-
 ```bash
 cd /path/to/nxXtend
-export PYTHONPATH="$PWD:$PWD/src"
+python -m pytest
 ```
 
-Both entries are required because the tree mixes two import styles — test files
-import `from src.core.writer import ...` (needs the repo root) while the modules
-themselves import `from core.writer import ...` and `from flakes.models import ...`
-(needs `src/`). With only one of them you get `ModuleNotFoundError` before a
-single assertion runs.
+That is the canonical command. It collects everything under `src/tests/` using the
+configuration in `pyproject.toml` (`testpaths` plus `pythonpath = ["src"]`), so no
+`PYTHONPATH` setup and no per-file invocation are required.
 
-`pytest` is not a declared dependency. Install it into your environment first:
+Useful variations:
 
 ```bash
-pip install pytest
+python -m pytest -v                          # verbose, one line per test
+python -m pytest src/tests/test_executor.py  # a single file
+python -m pytest -k flake                     # tests whose name matches
+python -m pytest --collect-only -q           # list collected tests without running
 ```
 
-**Files that use `pytest`** (function-style, collected normally):
-
-```bash
-python -m pytest src/tests/test_backup_restore.py src/tests/test_config.py \
-                 src/tests/test_discovery.py src/tests/test_executor.py \
-                 src/tests/test_main.py src/tests/test_nixos_modules_scoping.py \
-                 src/tests/test_package_attribute_identity.py \
-                 src/tests/test_package_identity.py src/tests/test_planner.py \
-                 src/tests/test_remove_flake.py src/tests/test_resolver.py
-```
-
-**Files that are standalone harnesses** (they call `sys.exit()` at the bottom, so
-`pytest` aborts collection with `INTERNALERROR`). Run each one directly and read
-its `RESULTS:` line:
-
-```bash
-for f in test_writer_formats test_writer_targets test_beta_audit_writer \
-         test_beta_audit_flakes test_beta_audit_cli_config test_target \
-         test_cli_shorts test_flakes_remove_target; do
-    python "src/tests/$f.py"
-done
-```
-
-Because of this split, running the whole `src/tests/` directory in a single
-`pytest` call aborts on the first harness file. Pass explicit paths, and classify
-a file before adding it to a batch run:
-
-```bash
-grep -q '^sys.exit' src/tests/test_<name>.py && echo harness || echo pytest
-```
+`pytest` is a development dependency. It is declared under
+`[project.optional-dependencies].test` in `pyproject.toml` and is already part of
+the Nix development shell (`nix develop`). It is not a runtime dependency.
 
 ### Test Suite
 
-The suite contains **19 test files**. The two styles are counted in **different
-units** — a `pytest` run reports test _functions_, while a harness reports
-`check()` _assertions_ — so they are listed in separate tables and must not be
-added together.
+The suite contains **20 test files** and **530 collected tests**.
 
-**pytest-style files — 178 test functions total.** These are what
-`python -m pytest` collects and reports.
+| Test file                            | Collected tests | Component                                       |
+| ------------------------------------ | --------------: | ----------------------------------------------- |
+| `test_writer_formats.py`             |              79 | Writer format contract and mutation gateway     |
+| `test_writer_targets.py`             |              52 | Writer target routing and list insertion        |
+| `test_flake_url_dispatch.py`         |              50 | Flake reference routing                         |
+| `test_cli_shorts.py`                 |              40 | Short-flag composition and dispatch wiring      |
+| `test_beta_audit_flakes.py`          |              34 | Flake audit findings                            |
+| `test_package_identity.py`           |              32 | Package identity, duplicate/collision detection |
+| `test_target.py`                     |              31 | SYSTEM/HOME target selection                    |
+| `test_package_attribute_identity.py` |              28 | `package_attr_name` vs `package_pname` identity |
+| `test_beta_audit_writer.py`          |              27 | Writer audit findings                           |
+| `test_beta_audit_cli_config.py`      |              26 | CLI and config audit findings                   |
+| `test_main.py`                       |              24 | CLI workflows and package operations            |
+| `test_nixos_modules_scoping.py`      |              22 | Scoped `nixosModules` insertion                 |
+| `test_executor.py`                   |              20 | Flake execution workflows                       |
+| `test_remove_flake.py`               |              15 | Flake removal, backup, and rollback             |
+| `test_flakes_remove_target.py`       |              13 | Target-aware Flake removal                      |
+| `test_config.py`                     |              12 | Configuration validation and repair             |
+| `test_discovery.py`                  |               8 | Flake output discovery and classification       |
+| `test_planner.py`                    |               8 | Action planning                                 |
+| `test_resolver.py`                   |               5 | Resolver and metadata handling                  |
+| `test_backup_restore.py`             |               4 | Backup and restore operations                   |
+| **Total**                            |         **530** |                                                 |
 
-| Test file                            | Test functions | Component                                       |
-| ------------------------------------ | -------------: | ----------------------------------------------- |
-| `test_package_identity.py`           |             32 | Package identity, duplicate/collision detection |
-| `test_package_attribute_identity.py` |             28 | `package_attr_name` vs `package_pname` identity |
-| `test_main.py`                       |             24 | CLI workflows and package operations            |
-| `test_nixos_modules_scoping.py`      |             22 | Scoped `nixosModules` insertion                 |
-| `test_executor.py`                   |             20 | Flake execution workflows                       |
-| `test_remove_flake.py`               |             15 | Flake removal, backup, and rollback             |
-| `test_config.py`                     |             12 | Configuration validation and repair             |
-| `test_discovery.py`                  |              8 | Flake output discovery and classification       |
-| `test_planner.py`                    |              8 | Action planning                                 |
-| `test_resolver.py`                   |              5 | Resolver and metadata handling                  |
-| `test_backup_restore.py`             |              4 | Backup and restore operations                   |
-| **Total**                            |        **178** |                                                 |
+Counts are **collected test instances**, which is what pytest reports.
+Parametrized tests expand to one instance per case, and some instances assert
+more than one related property, so the instance count is neither the number of
+test functions in the source nor the number of individual assertions.
 
-**harness-style files — 377 `check()` assertions total.** Each file prints its own
-`RESULTS: N passed, M failed` line.
+### Known defects (expected failures)
 
-| Test file                       | Assertions | Component                                   |
-| ------------------------------- | ---------: | ------------------------------------------- |
-| `test_writer_formats.py`        |        101 | Writer format contract and mutation gateway |
-| `test_writer_targets.py`        |         86 | Writer target routing and list insertion    |
-| `test_cli_shorts.py`            |         41 | Short-flag composition and dispatch wiring  |
-| `test_flakes_remove_target.py`  |         28 | Target-aware Flake removal                  |
-| `test_beta_audit_flakes.py`     |         36 | Flake audit findings                        |
-| `test_beta_audit_cli_config.py` |         26 | CLI and config audit findings               |
-| `test_target.py`                |         38 | SYSTEM/HOME target selection                |
-| `test_beta_audit_writer.py`     |         21 | Writer audit findings                       |
-| **Total**                       |    **377** |                                             |
+Four tests document known production defects. Each carries the custom
+`known_issue` marker and is pinned with `pytest.mark.xfail(strict=True, reason=...)`:
 
-The `test_beta_audit_*.py` files are audit harnesses: a failing check is a
-**recorded finding**, not a broken test, so they exit 0 while documenting known
-issues.
+- the suite stays green while the defect is open;
+- if the underlying behaviour is fixed, the test **XPASSes** and the suite
+  fails, forcing the marker to be removed and the fix acknowledged.
 
-Across both styles: **551 passing, 4 failing**.
+Run only these tests with:
 
-### Known failing tests
+```bash
+python -m pytest -m known_issue
+```
 
-All 4 remaining failures are **recorded audit findings** in `test_beta_audit_flakes.py`
-(3) and `test_beta_audit_cli_config.py` (1). They document known issues in the
-error-handling paths and are intentional — the harness exits 0 while reporting them.
+| Test file                       | Test                                             | Defect                                                   |
+| ------------------------------- | ------------------------------------------------ | -------------------------------------------------------- |
+| `test_beta_audit_flakes.py`     | `test_malformed_json_is_handled`                 | `json.JSONDecodeError` from `nix flake show` is uncaught  |
+| `test_beta_audit_flakes.py`     | `test_repeated_install_does_not_duplicate_input` | repeated install returns a non-success status            |
+| `test_beta_audit_flakes.py`     | `test_non_flake_path_rebuild_command`            | non-flake path issues no rebuild command                 |
+| `test_beta_audit_cli_config.py` | `test_user_keys_preserved_through_repair`        | custom `[future]` keys dropped during config repair      |
 
-| Test file                       | Failing | Cause                                    |
-| ------------------------------- | ------: | ---------------------------------------- |
-| `test_beta_audit_flakes.py`     |       3 | Malformed JSON, duplicate input, rebuild |
-| `test_beta_audit_cli_config.py` |       1 | Custom keys dropped during config repair |
-
-**Previously fixed:** The `-H` routing failures (18 across `test_cli_shorts` and
-`test_flakes_remove_target`) and the crashes in `test_target.py` and
-`test_beta_audit_flakes.py` were caused by test files importing `Target` via
+**Previously fixed:** the `-H` routing failures and the dual-module `Target`
+crashes were caused by test files importing `Target` via
 `from src.core.target import` while the application uses `from core.target import`.
 Python loaded the same file twice under two module names, creating two distinct
-`Target` classes. Aligning the import paths fixed all of them.
+`Target` classes. Aligning the import paths fixed all of them, and the pytest
+migration removed the last `src.`-prefixed imports (`src.api.*`).
 
 ### Integration Testing
 

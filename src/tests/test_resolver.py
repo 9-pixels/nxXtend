@@ -1,11 +1,8 @@
-import sys
-import os
 import json
 from unittest.mock import patch, MagicMock
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
-from flakes.resolver import get_metadata, parse_flake_url
+from flakes.resolver import get_metadata
 from flakes.models import FlakeSource
 
 
@@ -87,31 +84,3 @@ def test_metadata_empty_response():
 
 
 # ── Runner ─────────────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    tests = [
-        test_metadata_success_with_locked_rev,
-        test_metadata_locked_is_none,
-        test_metadata_command_fails,
-        test_metadata_preserves_target,
-        test_metadata_empty_response,
-    ]
-
-    passed = 0
-    failed = 0
-
-    for test in tests:
-        try:
-            test()
-            print(f"  ✓ {test.__name__}")
-            passed += 1
-        except AssertionError as e:
-            print(f"  ✗ {test.__name__}: {e}")
-            failed += 1
-        except Exception as e:
-            print(f"  ✗ {test.__name__}: {type(e).__name__}: {e}")
-            failed += 1
-
-    print(f"\n  {passed} passed, {failed} failed")
-    if failed:
-        sys.exit(1)

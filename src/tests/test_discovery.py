@@ -1,9 +1,6 @@
-import sys
-import os
 import json
 from unittest.mock import patch, MagicMock
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
 from flakes.discovery import discover, classify
 from flakes.models import FlakeSource, FlakeOutput
@@ -148,34 +145,3 @@ def test_overlays_not_unsupported():
 
 
 # ── Runner ─────────────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    tests = [
-        test_devshells_discovered,
-        test_no_wrong_system_leak,
-        test_default_first_in_each_type,
-        test_order_preserved_for_non_default,
-        test_non_systemic_types_have_no_system,
-        test_checks_ignored,
-        test_all_known_types_present,
-        test_overlays_not_unsupported,
-    ]
-
-    passed = 0
-    failed = 0
-
-    for test in tests:
-        try:
-            test()
-            print(f"  ✓ {test.__name__}")
-            passed += 1
-        except AssertionError as e:
-            print(f"  ✗ {test.__name__}: {e}")
-            failed += 1
-        except Exception as e:
-            print(f"  ✗ {test.__name__}: {type(e).__name__}: {e}")
-            failed += 1
-
-    print(f"\n  {passed} passed, {failed} failed")
-    if failed:
-        sys.exit(1)

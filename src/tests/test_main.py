@@ -1,9 +1,6 @@
-import sys
-import os
 import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
 from flakes.models import FlakeOutput
 from main import (
@@ -364,44 +361,3 @@ def test_flakes_guard_rejects_when_disabled():
     """The flakes guard must reject when flake_enabled=false"""
     config = {"setup": {"flake_enabled": False}}
     assert _check_flakes_enabled(config) is False
-
-
-if __name__ == "__main__":
-    tests = [
-        test_filter_packages,
-        test_filter_legacy_packages,
-        test_filter_nixos_modules,
-        test_filter_overlays,
-        test_filter_excludes_home_manager_modules,
-        test_filter_excludes_apps,
-        test_filter_excludes_devshells,
-        test_filter_mixed_types,
-        test_flakes_upgrade_uses_flake_path_from_config,
-        test_flakes_upgrade_runs_flake_update_then_rebuild,
-        test_flakes_upgrade_stops_on_flake_update_failure,
-        test_install_rollback_on_rebuild_failure,
-        test_install_keeps_changes_on_success,
-        test_remove_rollback_on_rebuild_failure,
-        test_remove_keeps_changes_on_success,
-        test_flakes_install_rejected_when_flakes_disabled,
-        test_flakes_install_rejection_message_mentions_config_path,
-        test_flakes_remove_rejected_when_flakes_disabled,
-        test_flakes_upgrade_rejected_when_flakes_disabled,
-        test_flakes_install_works_when_enabled,
-        test_home_manager_guard_rejects_when_disabled,
-        test_home_manager_guard_passes_when_enabled,
-        test_flakes_guard_passes_when_enabled,
-        test_flakes_guard_rejects_when_disabled,
-    ]
-    passed = failed = 0
-    for t in tests:
-        try:
-            t()
-            print(f"  ✓ {t.__name__}")
-            passed += 1
-        except AssertionError as e:
-            print(f"  ✗ {t.__name__}: {e}")
-            failed += 1
-    print(f"\n  {passed} passed, {failed} failed")
-    if failed:
-        sys.exit(1)

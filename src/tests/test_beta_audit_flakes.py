@@ -1,29 +1,32 @@
 """Beta audit 3/3 — flake discovery, install/remove integration, E2E sandbox.
 
-READ-ONLY audit: asserts CORRECT behavior; failures document bugs.
-All nix subprocesses mocked; files live in tempdirs.
+READ-ONLY audit: asserts CORRECT behavior; the checks that fail are known
+defects and are pinned with ``pytest.mark.xfail(strict=True, ...)`` so a
+defect that gets fixed surfaces as an XPASS and fails the suite.
+
+All nix subprocesses mocked; files live in tmp_path.
 """
-import sys
-import os
+import io
 import json
-import tempfile
+from contextlib import redirect_stdout
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
+import pytest
 
-from flakes.discovery import discover, classify
-from flakes.resolver import parse_flake_url
-from flakes.models import FlakeOutput
-from core.writer import add_flake, remove_flake, remove_flake_reference, add_flake_overlay
 from core.target import Target
+from core.writer import add_flake, remove_flake, remove_flake_reference
+from flakes.discovery import discover, classify
 from flakes.executor import execute
-from flakes.models import FlakeSource, InstallationPlan
+from flakes.models import FlakeOutput, FlakeSource, InstallationPlan
+from flakes.resolver import parse_flake_url
 
-PASS, FAIL = [], []
-def check(name, cond, detail=""):
-    (PASS if cond else FAIL).append(name)
-    print(f"  {'✓' if cond else '✗'} {name}" + (f" — {detail}" if not cond else ""))
+import main as main_mod
+
+
+FLAKE = '{\n  inputs = {\n    nixpkgs.url = "github:NixOS/nixpkgs";\n  };\n  outputs = { nixpkgs, ... }: {\n  };\n}\n'
+HOME = '{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    git\n  ];\n}\n'
+SYS = '{ pkgs, ... }:\n{\n  environment.systemPackages = with pkgs; [\n    git\n  ];\n}\n'
 
 
 def fake_discover(json_payload, system="x86_64-linux"):
@@ -42,116 +45,160 @@ def fake_discover(json_payload, system="x86_64-linux"):
         return discover(FlakeSource(url="github:x/y"))
 
 
-print("=" * 70)
-print("BETA AUDIT 3/3 — DISCOVERY / FLAKE OPS / E2E")
-print("=" * 70)
+# ── [A] Discovery adversarial ───────────────────────────────────────────────
 
-# ── [A] Discovery adversarial ──────────────────────────────────────────────
-print("\n[A] discovery adversarial")
+@pytest.mark.parametrize("payload,length,first", [
+    ({"packages": {"x86_64-linux": {"default": {}, "vim": {}, "htop": {}}}},
+     3, {"name": "default"}),
+    ({"packages": {"aarch64-darwin": {"vim": {}}}}, 0, None),
+    ({"packages": {"x86_64-linux": "not-a-dict"}}, 0, None),
+    ({"packages": "not-a-dict"}, 0, None),
+    ({"hydraJobs": {"x86_64-linux": {"x": {}}}}, 0, None),
+    ({}, 0, None),
+    ({"packages": {"x86_64-linux": {}}, "overlays": {"default": {}}},
+     1, {"type": "overlays"}),
+], ids=[
+    "A1 default ordered first",
+    "A2 wrong-system outputs excluded",
+    "A3 non-dict system content skipped",
+    "A4 non-dict type content skipped",
+    "A5 unknown output type (hydraJobs) ignored",
+    "A6 empty outputs → empty list",
+    "A7 empty system dict + overlay present → overlay only",
+])
+def test_discovery_adversarial(payload, length, first):
+    out = fake_discover(payload)
+    assert len(out) == length
+    if first is not None:
+        for key, value in first.items():
+            assert getattr(out[0], key) == value
 
-out = fake_discover({"packages": {"x86_64-linux": {"default": {}, "vim": {}, "htop": {}}}})
-check("A1 default ordered first",
-      out and out[0].name == "default" and len(out) == 3)
 
-out = fake_discover({"packages": {"aarch64-darwin": {"vim": {}}}})   # wrong system
-check("A2 wrong-system outputs excluded", out == [])
-
-out = fake_discover({"packages": {"x86_64-linux": "not-a-dict"}})
-check("A3 non-dict system content skipped", out == [])
-
-out = fake_discover({"packages": "not-a-dict"})
-check("A4 non-dict type content skipped", out == [])
-
-out = fake_discover({"hydraJobs": {"x86_64-linux": {"x": {}}}})
-check("A5 unknown output type (hydraJobs) ignored", out == [])
-
-out = fake_discover({})
-check("A6 empty outputs → empty list", out == [])
-
-out = fake_discover({"packages": {"x86_64-linux": {}}, "overlays": {"default": {}}})
-check("A7 empty system dict + overlay present → overlay only",
-      len(out) == 1 and out[0].type == "overlays")
-
-# A8: malformed JSON from nix
-with patch("flakes.discovery.subprocess.run") as mr:
-    m = MagicMock(); m.returncode = 0; m.stdout = "{invalid json"
-    mr.return_value = m
-    try:
+@pytest.mark.known_issue
+@pytest.mark.xfail(
+    strict=True,
+    reason="A8 known defect: malformed JSON from `nix flake show` raises "
+           "json.JSONDecodeError that propagates uncaught out of discover(); "
+           "it should return [] or raise a controlled error instead.")
+def test_malformed_json_is_handled():
+    with patch("flakes.discovery.subprocess.run") as mr:
+        m = MagicMock()
+        m.returncode = 0
+        m.stdout = "{invalid json"
+        mr.return_value = m
         out = discover(FlakeSource(url="github:x/y"))
-        check("A8 malformed JSON → handled (empty or exception)", out == [])
-    except json.JSONDecodeError:
-        check("A8 malformed JSON → handled (empty or exception)", False,
-              "json.JSONDecodeError propagates uncaught to caller")
+    assert out == []
 
-# A9: nix failure (non-zero)
-with patch("flakes.discovery.subprocess.run") as mr:
-    m = MagicMock(); m.returncode = 1; m.stdout = ""
-    mr.return_value = m
-    out = discover(FlakeSource(url="github:x/y"))
-    check("A9 nix failure → empty list", out == [])
 
-# ── [B] classify coverage ──────────────────────────────────────────────────
-print("\n[B] classify")
+def test_nix_failure_returns_empty_list():
+    with patch("flakes.discovery.subprocess.run") as mr:
+        m = MagicMock()
+        m.returncode = 1
+        m.stdout = ""
+        mr.return_value = m
+        out = discover(FlakeSource(url="github:x/y"))
+    assert out == []
 
-for t, expected in [("packages", "installable"), ("legacyPackages", "installable"),
-                    ("nixosModules", "configurable"), ("homeManagerModules", "configurable"),
-                    ("apps", "executable"), ("overlays", "overlay"),
-                    ("devShells", "unsupported"), ("checks", "unsupported"),
-                    ("bogusType", "unsupported")]:
-    got = classify(FlakeOutput(name="x", type=t))
-    check(f"B {t} → {expected}", got == expected, f"got {got}")
 
-# ── [C] resolver ───────────────────────────────────────────────────────────
-print("\n[C] resolver")
+# ── [B] classify coverage ───────────────────────────────────────────────────
 
-s = parse_flake_url("github:user/repo#packages.x86_64-linux.vim")
-check("C1 URL with # target split", s.url == "github:user/repo" and s.target == "packages.x86_64-linux.vim")
+@pytest.mark.parametrize("output_type,expected", [
+    ("packages", "installable"),
+    ("legacyPackages", "installable"),
+    ("nixosModules", "configurable"),
+    ("homeManagerModules", "configurable"),
+    ("apps", "executable"),
+    ("overlays", "overlay"),
+    ("devShells", "unsupported"),
+    ("checks", "unsupported"),
+    ("bogusType", "unsupported"),
+], ids=[
+    "B packages → installable",
+    "B legacyPackages → installable",
+    "B nixosModules → configurable",
+    "B homeManagerModules → configurable",
+    "B apps → executable",
+    "B overlays → overlay",
+    "B devShells → unsupported",
+    "B checks → unsupported",
+    "B bogusType → unsupported",
+])
+def test_classify_coverage(output_type, expected):
+    got = classify(FlakeOutput(name="x", type=output_type))
+    assert got == expected, f"got {got}"
 
-s = parse_flake_url("github:user/repo")
-check("C2 plain URL", s.url == "github:user/repo" and s.target is None)
 
-# ── [D] add_flake / remove round trips (writer level) ─────────────────────
-print("\n[D] flake writer round trips")
+# ── [C] resolver ────────────────────────────────────────────────────────────
 
-FLAKE = '{\n  inputs = {\n    nixpkgs.url = "github:NixOS/nixpkgs";\n  };\n  outputs = { nixpkgs, ... }: {\n  };\n}\n'
-HOME = '{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    git\n  ];\n}\n'
-SYS = '{ pkgs, ... }:\n{\n  environment.systemPackages = with pkgs; [\n    git\n  ];\n}\n'
+def test_resolver_url_with_target_split():
+    s = parse_flake_url("github:user/repo#packages.x86_64-linux.vim")
+    assert s.url == "github:user/repo"
+    assert s.target == "packages.x86_64-linux.vim"
 
-fc, hc, st = add_flake(FLAKE, "test-flake", "github:x/y", "default", "package",
-                       home_content=HOME, block="home.packages")
-check("D1 add_flake HOME: input in flake, ref in home, status success",
-      'url = "github:x/y"' in fc and "inputs.test-flake.packages" in hc and st == "success")
 
-# D2: repeated install — input must not duplicate
-fc2, hc2, st2 = add_flake(fc, "test-flake", "github:x/y", "default", "package",
-                          home_content=hc, block="home.packages")
-input_count = fc2.count('url = "github:x/y"')
-check("D2 repeated install: input not duplicated, status success",
-      input_count == 1 and st2 == "success", f"input occurrences: {input_count}")
+def test_resolver_plain_url():
+    s = parse_flake_url("github:user/repo")
+    assert s.url == "github:user/repo"
+    assert s.target is None
 
-# D3: remove_flake on real structure
-fc3, found = remove_flake(fc2, "test-flake")
-check("D3 remove_flake removes input", found and "test-flake" not in fc3)
 
-# D4: remove_flake_reference with unusual-but-valid formatting
-weird = '  inputs.x.packages.${ pkgs.system }.default\n'
-out, found = remove_flake_reference(weird, "x")
-check("D4 reference with spaces inside ${ } matched",
-      found, f"found={found!r} out={out!r}")
+# ── [D] add_flake / remove round trips (writer level) ──────────────────────
 
-# D5: overlay ref removal with attr != default
-ov = '    inputs.x.overlays.my-overlay\n'
-out, found = remove_flake_reference(ov, "x")
-check("D5 non-default overlay attr removed", found)
+def test_add_flake_home_round_trip():
+    fc, hc, st = add_flake(FLAKE, "test-flake", "github:x/y", "default", "package",
+                           home_content=HOME, block="home.packages")
+    assert 'url = "github:x/y"' in fc
+    assert "inputs.test-flake.packages" in hc
+    assert st == "success"
 
-# ── [E] executor integration (sandboxed) ───────────────────────────────────
-print("\n[E] executor integration")
+
+@pytest.mark.known_issue
+@pytest.mark.xfail(
+    strict=True,
+    reason="D2 known defect: repeated add_flake of the same input leaves the "
+           "input unduplicated but returns a non-success status instead of "
+           "\"success\".")
+def test_repeated_install_does_not_duplicate_input():
+    fc, hc, st = add_flake(FLAKE, "test-flake", "github:x/y", "default", "package",
+                           home_content=HOME, block="home.packages")
+    fc2, hc2, st2 = add_flake(fc, "test-flake", "github:x/y", "default", "package",
+                              home_content=hc, block="home.packages")
+    input_count = fc2.count('url = "github:x/y"')
+    assert input_count == 1, f"input occurrences: {input_count}"
+    assert st2 == "success"
+
+
+def test_remove_flake_removes_input():
+    fc, hc, st = add_flake(FLAKE, "test-flake", "github:x/y", "default", "package",
+                           home_content=HOME, block="home.packages")
+    fc2, hc2, st2 = add_flake(fc, "test-flake", "github:x/y", "default", "package",
+                              home_content=hc, block="home.packages")
+    fc3, found = remove_flake(fc2, "test-flake")
+    assert found
+    assert "test-flake" not in fc3
+
+
+def test_remove_flake_reference_with_spaces_inside_interpolation():
+    weird = '  inputs.x.packages.${ pkgs.system }.default\n'
+    out, found = remove_flake_reference(weird, "x")
+    assert found, f"found={found!r} out={out!r}"
+
+
+def test_remove_flake_reference_non_default_overlay_attr():
+    ov = '    inputs.x.overlays.my-overlay\n'
+    out, found = remove_flake_reference(ov, "x")
+    assert found
+
+
+# ── [E] executor integration (sandboxed) ────────────────────────────────────
 
 def make_plan(action="install", pkg_type="packages", name="default"):
     return InstallationPlan(
         source=FlakeSource(url="github:x/y", revision="abc"),
-        output=FlakeOutput(name=name, type=pkg_type, attribute=f"{pkg_type}.x86_64-linux.{name}"),
+        output=FlakeOutput(name=name, type=pkg_type,
+                           attribute=f"{pkg_type}.x86_64-linux.{name}"),
         action=action, system="x86_64-linux", flake_name="repo")
+
 
 def make_config(td, flake_enabled=True, hm=True):
     return {"setup": {
@@ -163,6 +210,7 @@ def make_config(td, flake_enabled=True, hm=True):
         "unstable_variable": "unstable",
     }}
 
+
 def setup_env(td, sys_text=None, home_text=None, flake_text=FLAKE):
     if flake_text is not None:
         Path(td, "flake.nix").write_text(flake_text)
@@ -170,6 +218,7 @@ def setup_env(td, sys_text=None, home_text=None, flake_text=FLAKE):
         Path(td, "configuration.nix").write_text(sys_text)
     if home_text is not None:
         Path(td, "home.nix").write_text(home_text)
+
 
 def run_exec(td, plan, config, target=None):
     with patch("flakes.executor.subprocess.run") as mr, \
@@ -180,55 +229,54 @@ def run_exec(td, plan, config, target=None):
         rebuild_cmd = mr.call_args[0][0] if mr.called else None
     return ok, rebuild_cmd
 
-# E1: flake install SYSTEM — rebuild must use --flake (not plain switch)
-with tempfile.TemporaryDirectory() as td:
-    setup_env(td, sys_text=SYS, home_text=HOME)
-    ok, cmd = run_exec(td, make_plan(), make_config(td))
-    check("E1 rebuild uses nixos-rebuild switch --flake",
-          ok and cmd and cmd[0] == "nixos-rebuild" and "--flake" in cmd,
-          f"ok={ok} cmd={cmd}")
 
-# E2: flake_enabled=false — executor still rebuilds with --flake?
-with tempfile.TemporaryDirectory() as td:
-    setup_env(td, sys_text=SYS, home_text=HOME)
-    ok, cmd = run_exec(td, make_plan(), make_config(td, flake_enabled=False))
-    check("E2 non-flake path rebuild command (record actual)",
-          cmd is not None, f"ok={ok} cmd={cmd}")
+def test_executor_rebuild_uses_flake_flag(tmp_path):
+    setup_env(tmp_path, sys_text=SYS, home_text=HOME)
+    ok, cmd = run_exec(tmp_path, make_plan(), make_config(tmp_path))
+    assert ok and cmd and cmd[0] == "nixos-rebuild" and "--flake" in cmd, \
+        f"ok={ok} cmd={cmd}"
 
-# E3: flake missing entirely (flake_enabled=true, no flake.nix)
-with tempfile.TemporaryDirectory() as td:
-    setup_env(td, sys_text=SYS, home_text=HOME, flake_text=None)
-    if Path(td, "flake.nix").exists():
-        Path(td, "flake.nix").unlink()
-    ok, cmd = run_exec(td, make_plan(), make_config(td))
-    check("E3 missing flake.nix → False, no rebuild", ok is False and cmd is None,
-          f"ok={ok} cmd={cmd}")
 
-# E4: install with target=HOME but home.nix missing
-with tempfile.TemporaryDirectory() as td:
-    setup_env(td, sys_text=SYS, home_text=None)
-    ok, cmd = run_exec(td, make_plan(), make_config(td), target=Target.HOME)
-    check("E4 HOME target without home.nix → False, no rebuild",
-          ok is False and cmd is None, f"ok={ok} cmd={cmd}")
+@pytest.mark.known_issue
+@pytest.mark.xfail(
+    strict=True,
+    reason="E2 known defect: with flake_enabled=false the executor returns "
+           "ok=False and issues no rebuild command at all, instead of "
+           "rebuilding through the non-flake path.")
+def test_non_flake_path_rebuild_command(tmp_path):
+    setup_env(tmp_path, sys_text=SYS, home_text=HOME)
+    ok, cmd = run_exec(tmp_path, make_plan(), make_config(tmp_path, flake_enabled=False))
+    assert cmd is not None, f"ok={ok} cmd={cmd}"
 
-# E5: unmanaged-reference refusal is handler-level; executor overlay+HOME (record)
-with tempfile.TemporaryDirectory() as td:
-    setup_env(td, sys_text=SYS, home_text=HOME)
-    ok, cmd = run_exec(td, make_plan(action="overlay", pkg_type="overlays"),
-                       make_config(td), target=Target.HOME)
-    home_after = Path(td, "home.nix").read_text()
-    check("E5 overlay + HOME target: overlay written to home.nix (semantics undefined — record)",
-          "nixpkgs.overlays" in home_after,
-          f"overlay landed in home.nix: {'nixpkgs.overlays' in home_after}")
 
-# ── [F] E2E sandbox: full install→remove cycle via handlers ───────────────
-print("\n[F] E2E sandbox — handler level")
+def test_executor_missing_flake_nix(tmp_path):
+    setup_env(tmp_path, sys_text=SYS, home_text=HOME, flake_text=None)
+    if Path(tmp_path, "flake.nix").exists():
+        Path(tmp_path, "flake.nix").unlink()
+    ok, cmd = run_exec(tmp_path, make_plan(), make_config(tmp_path))
+    assert ok is False and cmd is None, f"ok={ok} cmd={cmd}"
 
-import io
-from contextlib import redirect_stdout
+
+def test_executor_home_target_without_home_nix(tmp_path):
+    setup_env(tmp_path, sys_text=SYS, home_text=None)
+    ok, cmd = run_exec(tmp_path, make_plan(), make_config(tmp_path), target=Target.HOME)
+    assert ok is False and cmd is None, f"ok={ok} cmd={cmd}"
+
+
+def test_executor_overlay_with_home_target(tmp_path):
+    setup_env(tmp_path, sys_text=SYS, home_text=HOME)
+    run_exec(tmp_path, make_plan(action="overlay", pkg_type="overlays"),
+             make_config(tmp_path), target=Target.HOME)
+    home_after = Path(tmp_path, "home.nix").read_text()
+    # Semantics are undefined; this records the current behaviour.
+    assert "nixpkgs.overlays" in home_after
+
+
+# ── [F] E2E sandbox: full install→remove cycle via handlers ────────────────
 
 def run_handler_install(url, config, requested=None):
-    outs = [FlakeOutput(name="default", type="packages", attribute="packages.x86_64-linux.default")]
+    outs = [FlakeOutput(name="default", type="packages",
+                        attribute="packages.x86_64-linux.default")]
     with patch("main.parse_flake_url", return_value=FlakeSource(url=url)), \
          patch("main.get_metadata", return_value=FlakeSource(url=url)), \
          patch("main.discover", return_value=outs), \
@@ -244,50 +292,44 @@ def run_handler_install(url, config, requested=None):
         mr.return_value = MagicMock(returncode=0)
         main_mod.handle_flakes_install(url, config, requested=requested)
 
-import main as main_mod
 
-with tempfile.TemporaryDirectory() as td:
-    setup_env(td, sys_text=SYS, home_text=HOME)
-    cfg = make_config(td)
+def test_e2e_install_system(tmp_path):
+    setup_env(tmp_path, sys_text=SYS, home_text=HOME)
+    cfg = make_config(tmp_path)
     run_handler_install("github:test/repo", cfg)  # SYSTEM default
-    sys_txt = Path(td, "configuration.nix").read_text()
-    home_txt = Path(td, "home.nix").read_text()
-    check("F1 E2E install SYSTEM: ref in configuration.nix",
-          "inputs.repo.packages" in sys_txt)
-    check("F2 E2E install SYSTEM: home.nix untouched",
-          home_txt == HOME)
+    sys_txt = Path(tmp_path, "configuration.nix").read_text()
+    home_txt = Path(tmp_path, "home.nix").read_text()
+    assert "inputs.repo.packages" in sys_txt
+    assert home_txt == HOME
 
-with tempfile.TemporaryDirectory() as td:
-    setup_env(td, sys_text=SYS, home_text=HOME)
-    cfg = make_config(td)
+
+def test_e2e_install_home(tmp_path):
+    setup_env(tmp_path, sys_text=SYS, home_text=HOME)
+    cfg = make_config(tmp_path)
     run_handler_install("github:test/repo", cfg, requested=Target.HOME)
-    home_txt = Path(td, "home.nix").read_text()
-    sys_txt = Path(td, "configuration.nix").read_text()
-    check("F3 E2E install HOME: ref in home.nix",
-          "inputs.repo.packages" in home_txt)
-    check("F4 E2E install HOME: configuration.nix untouched",
-          sys_txt == SYS)
+    home_txt = Path(tmp_path, "home.nix").read_text()
+    sys_txt = Path(tmp_path, "configuration.nix").read_text()
+    assert "inputs.repo.packages" in home_txt
+    assert sys_txt == SYS
 
-# F5: unmanaged reference refusal (handler level)
-with tempfile.TemporaryDirectory() as td:
-    setup_env(td, sys_text=SYS, home_text=HOME)
-    # put an unmanaged ref in configuration.nix
-    Path(td, "configuration.nix").write_text(SYS.replace(
+
+def test_e2e_unmanaged_reference_refused(tmp_path):
+    setup_env(tmp_path, sys_text=SYS, home_text=HOME)
+    Path(tmp_path, "configuration.nix").write_text(SYS.replace(
         "git", "git\n    inputs.evil-flake.someCustom.thing"))
-    cfg = make_config(td)
+    cfg = make_config(tmp_path)
     with patch("main.subprocess.run") as mr, \
          patch("main.backup_files"), patch("main.restore_files"), \
          redirect_stdout(io.StringIO()) as buf:
         mr.return_value = MagicMock(returncode=0)
         main_mod.handle_flakes_remove("evil-flake", cfg)
-    check("F5 unmanaged reference → refused, no rebuild",
-          not mr.called and "unmanaged" in buf.getvalue(),
-          f"subprocess_called={mr.called}")
+    assert not mr.called
+    assert "unmanaged" in buf.getvalue()
 
-# F6: repeated remove of same flake
-with tempfile.TemporaryDirectory() as td:
-    setup_env(td, sys_text=SYS, home_text=HOME)
-    cfg = make_config(td)
+
+def test_e2e_repeated_remove(tmp_path):
+    setup_env(tmp_path, sys_text=SYS, home_text=HOME)
+    cfg = make_config(tmp_path)
     run_handler_install("github:test/repo", cfg)
     with patch("main.subprocess.run") as mr, patch("main.backup_files"), \
          patch("main.restore_files"), redirect_stdout(io.StringIO()):
@@ -296,13 +338,4 @@ with tempfile.TemporaryDirectory() as td:
         buf2 = io.StringIO()
         with redirect_stdout(buf2):
             main_mod.handle_flakes_remove("repo", cfg)
-    check("F6 second remove → 'not found or was not added by nx'",
-          "not found" in buf2.getvalue(), f"msg={buf2.getvalue()!r:.80}")
-
-print("\n" + "=" * 70)
-print(f"RESULTS: {len(PASS)} passed, {len(FAIL)} failed (failures = findings)")
-if FAIL:
-    for f in FAIL:
-        print(f"  ✗ FINDING: {f}")
-print("=" * 70)
-sys.exit(0)
+    assert "not found" in buf2.getvalue()
