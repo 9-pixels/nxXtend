@@ -2,10 +2,60 @@
 # Copyright (C) 2026 9-pixels
 
 import curses
+import subprocess
 import sys
 from models.package import Package
 
 PAGE_SIZE = 17
+
+
+def show_error(title: str, detail: str | None = None):
+    """Show an error to the user immediately and completely.
+
+    ``title`` is a one-line summary of what failed. ``detail`` is the raw
+    output behind it — command stderr, an exception, a traceback — printed
+    verbatim so no part of the error is lost.
+    """
+    print(f"\n  ✗ {title}\n")
+    if detail:
+        detail = detail.rstrip("\n")
+        if detail:
+            for line in detail.splitlines():
+                print(f"    {line}")
+            print()
+
+
+def show_command_error(command, result, extra: str | None = None):
+    """Show a failed subprocess command together with its full output.
+
+    ``command`` is the argv that was run; ``result`` is the CompletedProcess
+    returned by :func:`subprocess.run`. Falls back to ``extra`` when the
+    process produced no output at all.
+    """
+    cmd = " ".join(str(part) for part in command)
+    title = f"command failed (exit {result.returncode}): {cmd}"
+    detail = (result.stderr or "").strip() or (result.stdout or "").strip()
+    show_error(title, detail or extra)
+
+
+def timeout_detail(exc: subprocess.TimeoutExpired, timeout: int) -> str:
+    """Message for a timed-out command, including any partial output.
+
+    ``subprocess.run`` attaches whatever the pipes already held to the
+    exception, so a command that printed a diagnostic and then hung can still
+    have that diagnostic shown. The value may be bytes or str depending on
+    how the call was made.
+    """
+    message = f"timed out after {timeout}s"
+    for value in (exc.stdout, exc.stderr):
+        if value is None:
+            continue
+        if isinstance(value, bytes):
+            value = value.decode(errors="replace")
+        value = value.strip()
+        if value:
+            return f"{message}\n\n{value}"
+    return message
 
 def show_searching(source: str):
     """Show a 'searching...' message with carriage return for in-place update."""

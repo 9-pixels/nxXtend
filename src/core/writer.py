@@ -13,9 +13,14 @@ class AddResult:
     a successful modification and a failure. Returning a raw string would force
     callers to either catch exceptions or compare content to detect failure,
     neither of which is ergonomic or safe.
+
+    ``error`` carries the exception text for ``status == "error"`` so the
+    caller — which owns the display layer — can report exactly what went wrong
+    instead of a generic failure message.
     """
     content: str
     status: str
+    error: str | None = None
 
 
 @dataclass
@@ -335,8 +340,8 @@ def add_package(content: str, pkg_name: str, config_dir: Path, block: str = "env
         if new == content:
             return AddResult(content=content, status="no_change")
         return AddResult(content=new, status="success")
-    except Exception:
-        return AddResult(content=content, status="error")
+    except Exception as exc:
+        return AddResult(content=content, status="error", error=repr(exc))
 
 
 def remove_package(content: str, pkg_name: str, config_dir: Path,

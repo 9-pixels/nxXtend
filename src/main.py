@@ -45,7 +45,9 @@ from flakes.planner import build_plan
 from flakes.resolver import get_metadata, parse_flake_url
 
 from ui.display import (
+    show_command_error,
     show_done,
+    show_error,
     show_install_conflict,
     show_no_results,
     show_rebuild_done,
@@ -57,6 +59,7 @@ from ui.display import (
     show_summary,
     show_remove_ambiguous,
     show_unsupported_format,
+    timeout_detail,
 )
 from ui.first_setup import first_setup
 
@@ -67,6 +70,8 @@ except Exception:
     VERSION = "dev"
 
 console = Console()
+
+_FLAKE_UPDATE_TIMEOUT = 300
 
 
 def bootstrap() -> dict:
@@ -183,7 +188,12 @@ def handle_install(pkg_name: str, config: dict, requested: Target | None = None)
         pkg_ref = build_package_reference(pkg.attribute, pkg.source, fmt, unstable_var)
         result = add_package(content, pkg_ref, config_dir, info.block)
         if result.status != "success":
-            show_unsupported_format(result.status, info.block)
+            # A raised exception carries its own text; an unsupported format
+            # is a user-actionable condition with a dedicated explanation.
+            if result.error:
+                show_error("failed to modify the configuration", result.error)
+            else:
+                show_unsupported_format(result.status, info.block)
             restore_files([config_file])
             return
         content = result.content
@@ -196,8 +206,11 @@ def handle_install(pkg_name: str, config: dict, requested: Target | None = None)
         try:
             restore_files([config_file])
             show_rebuild_done(False)
-        except Exception:
-            console.print("\n  ✗ nixos-rebuild failed AND rollback failed — manual check required\n")
+        except Exception as exc:
+            show_error(
+                "nixos-rebuild failed AND rollback failed — manual check required",
+                repr(exc),
+            )
 
 def handle_remove(pkg_name: str, config: dict, requested: Target | None = None):
     target = _resolve_requested_target(requested, config)
@@ -260,8 +273,11 @@ def handle_remove(pkg_name: str, config: dict, requested: Target | None = None):
         try:
             restore_files([config_file])
             show_rebuild_done(False)
-        except Exception:
-            console.print("\n  ✗ nixos-rebuild failed AND rollback failed — manual check required\n")
+        except Exception as exc:
+            show_error(
+                "nixos-rebuild failed AND rollback failed — manual check required",
+                repr(exc),
+            )
 
 def handle_upgrade(config: dict):
     config_file = Path(config["setup"]["configuration_path"])
@@ -332,7 +348,7 @@ def handle_flakes_install(url: str, config: dict, requested: Target | None = Non
     outputs = discover(source)
 
     if not outputs:
-        show_no_results(url)
+        # discover() already explained why there is nothing to show.
         return
 
     # 3 — filter supported outputs
@@ -446,9 +462,9 @@ def handle_flakes_remove(name: str, config: dict, requested: Target | None = Non
             flake_file.write_text(new_content)
         if target_file.exists() and target_content is not None:
             target_file.write_text(target_content)
-    except Exception:
+    except Exception as exc:
         restore_files(files)
-        console.print("\n  ✗ transaction failed during write — changes reverted\n")
+        show_error("transaction failed during write — changes reverted", repr(exc))
         return
 
     if keep_input:
@@ -463,8 +479,11 @@ def handle_flakes_remove(name: str, config: dict, requested: Target | None = Non
         try:
             restore_files(files)
             show_rebuild_done(False)
-        except Exception:
-            console.print("\n  ✗ nixos-rebuild failed AND rollback failed — manual check required\n")
+        except Exception as exc:
+            show_error(
+                "nixos-rebuild failed AND rollback failed — manual check required",
+                repr(exc),
+            )
 
 def handle_flakes_upgrade(config: dict):
     if not _check_flakes_enabled(config):
@@ -472,10 +491,26 @@ def handle_flakes_upgrade(config: dict):
 
     flake_path = Path(config["setup"]["flake_path"])
     flake_dir = flake_path.parent
-    result = subprocess.run(["nix", "flake", "update", "--flake", str(flake_dir)], cwd=str(flake_dir))
-    if result.returncode != 0:
-        show_rebuild_done(False)
+
+    # Updating inputs is a distinct step from rebuilding: it has its own
+    # failure mode and its own message, and it must never be reported as a
+    # failed rebuild (nothing was rebuilt and nothing was reverted).
+    update_cmd = ["nix", "flake", "update", "--flake", str(flake_dir)]
+    try:
+        result = subprocess.run(update_cmd, cwd=str(flake_dir),
+                                capture_output=True, text=True,
+                                timeout=_FLAKE_UPDATE_TIMEOUT)
+    except subprocess.TimeoutExpired as exc:
+        show_error(
+            f"nix flake update timed out after {_FLAKE_UPDATE_TIMEOUT}s",
+            timeout_detail(exc, _FLAKE_UPDATE_TIMEOUT) +
+            f"\n\nin {flake_dir}; no rebuild was attempted",
+        )
         return
+    if result.returncode != 0:
+        show_command_error(update_cmd, result)
+        return
+
     show_rebuild_start()
     result = subprocess.run(["nixos-rebuild", "switch", "--flake", str(flake_dir)], cwd=str(flake_dir))
     show_rebuild_done(result.returncode == 0)

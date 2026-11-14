@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from flakes.models import InstallationPlan
 from core.target import Target, SYSTEM_BLOCK, HOME_BLOCK
+from ui.display import show_error, show_unsupported_format
 from core.writer import (
     read_config, backup_files, restore_files,
     add_flake, add_flake_overlay, add_package, build_package_reference, detect_format
@@ -102,6 +103,7 @@ def execute(plan: InstallationPlan, config: dict, target: Target | None = None) 
                 # Unsupported/failed format in the target file: nothing was
                 # written — restore backups and stop before any rebuild.
                 restore_files(files)
+                show_unsupported_format(add_status, target_block)
                 return False
         else:
             # Non-flake install: add package directly to configuration.nix
@@ -109,6 +111,8 @@ def execute(plan: InstallationPlan, config: dict, target: Target | None = None) 
             pkg_ref = build_package_reference(plan.output.name, "stable", fmt, unstable_var)
             result = add_package(target_content, pkg_ref, config_dir)
             if result.status != "success":
+                if result.error:
+                    show_error("failed to modify the configuration", result.error)
                 restore_files(files)
                 return False
             target_content = result.content
@@ -147,8 +151,9 @@ def execute(plan: InstallationPlan, config: dict, target: Target | None = None) 
         if flake_file and flake_content is not None:
             flake_file.write_text(flake_content)
         target_file.write_text(target_content)
-    except Exception:
+    except Exception as exc:
         restore_files(files)
+        show_error("failed to write configuration files", repr(exc))
         return False
 
     result = subprocess.run(
