@@ -26,7 +26,7 @@
         {
           default = pkgs.python3Packages.buildPythonApplication {
             pname = "nxXtend";
-            version = "0.1.2";
+            version = "0.1.3";
 
             src = ./.;
 
