@@ -9,6 +9,7 @@ from pathlib import Path
 from rich.console import Console
 from core.config import CONFIG_FILE, is_setup_done, load_config
 from core.manager import search
+from api.errors import PackageSearchFailed
 from core.target import (
     Target,
     require_home_manager,
@@ -117,17 +118,30 @@ def handle_install(pkg_name: str, config: dict, requested: Target | None = None)
     config_file = info.file
     config_dir = config_file.parent
     results = {}
-    for source, packages in search(pkg_name):
-        show_searching(source)
-        results[source] = packages
-        show_done(source)
-    if not results["stable"] and not results["unstable"]:
-        show_no_results(pkg_name)
+    search_failed = False
+    try:
+        for source, packages in search(pkg_name):
+            show_searching(source)
+            results[source] = packages
+            show_done(source)
+    except PackageSearchFailed as exc:
+        # The channels that did answer have already been collected above;
+        # report the failures and keep whatever results exist.
+        show_error("package search failed", exc.detail)
+        search_failed = True
+
+    if not results.get("stable") and not results.get("unstable"):
+        if not search_failed:
+            show_no_results(pkg_name)
         return
-    source = show_source_select(len(results["stable"]), len(results["unstable"]))
+    source = show_source_select(len(results.get("stable", [])),
+                                len(results.get("unstable", [])))
     if source == 0:
         return
-    packages = results["stable"] if source == 1 else results["unstable"]
+    packages = (results.get("stable", []) if source == 1
+                else results.get("unstable", []))
+    if not packages:
+        return
     selected = show_results(packages)
     if not selected:
         return

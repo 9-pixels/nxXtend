@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 9-pixels
 
+from api.errors import PackageSearchError, PackageSearchFailed
 from api.stable import stable_search
 from api.unstable import unstable_search
 
@@ -21,8 +22,20 @@ def deduplicate(packages):
     return result
 
 def search(pkg_name: str):
-    stable = deduplicate(stable_search(pkg_name))
-    yield "stable", stable
-    unstable = deduplicate(unstable_search(pkg_name))
-    yield "unstable", unstable
+    """Yield ``(source, packages)`` per channel, in order.
 
+    A channel that cannot be searched is skipped rather than aborting the
+    whole search, so the other channel's results still reach the user. Once
+    the generator is exhausted, :class:`PackageSearchFailed` is raised if any
+    channel failed, so the failure is reported without being silent.
+    """
+    failures = []
+    for source, fetch in (("stable", stable_search), ("unstable", unstable_search)):
+        try:
+            packages = deduplicate(fetch(pkg_name))
+        except PackageSearchError as exc:
+            failures.append(exc)
+            continue
+        yield source, packages
+    if failures:
+        raise PackageSearchFailed(failures)

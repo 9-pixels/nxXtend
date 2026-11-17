@@ -55,7 +55,7 @@ def _mock_response(hits):
 
 def search_module(module, hits):
     """Call the real API search function with `requests.post` mocked."""
-    with patch(f"api.{module}.requests.post", return_value=_mock_response(hits)):
+    with patch("api.client.requests.post", return_value=_mock_response(hits)):
         mod = importlib.import_module(f"api.{module}")
         return mod.stable_search("q") if module == "stable" else mod.unstable_search("q")
 

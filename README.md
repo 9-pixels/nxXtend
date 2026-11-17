@@ -3,7 +3,7 @@
 <h1>nx</h1>
 
 [![License](https://img.shields.io/github/license/9-pixels/nxXtend)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-605%20collected-success)](#testing)
+[![Tests](https://img.shields.io/badge/tests-620%20collected-success)](#testing)
 [![Python](https://img.shields.io/badge/Python-3.x-blue?logo=python)](https://www.python.org/)
 [![NixOS](https://img.shields.io/badge/NixOS-supported-5277C3?logo=nixos)](https://nixos.org/)
 [<img src="https://devin.ai/assets/askdeepwiki.png" alt="Ask DeepWiki" height="20"/>](https://deepwiki.com/9-pixels/nxXtend)
@@ -559,7 +559,7 @@ the Nix development shell (`nix develop`). It is not a runtime dependency.
 
 ### Test Suite
 
-The suite contains **24 test files** and **605 collected tests**.
+The suite contains **24 test files** and **620 collected tests**.
 
 | Test file                            | Collected tests | Component                                       |
 | ------------------------------------ | --------------: | ----------------------------------------------- |
@@ -579,6 +579,7 @@ The suite contains **24 test files** and **605 collected tests**.
 | `test_nixos_modules_scoping.py`      |              22 | Scoped `nixosModules` insertion                 |
 | `test_executor.py`                   |              20 | Flake execution workflows                       |
 | `test_remove_flake.py`               |              15 | Flake removal, backup, and rollback             |
+| `test_api_errors.py`                 |              15 | Package search failure handling                 |
 | `test_flakes_remove_target.py`       |              13 | Target-aware Flake removal                      |
 | `test_config.py`                     |              12 | Configuration validation and repair             |
 | `test_license_headers.py`            |              10 | License header guard                            |
@@ -586,7 +587,7 @@ The suite contains **24 test files** and **605 collected tests**.
 | `test_planner.py`                    |               8 | Action planning                                 |
 | `test_resolver.py`                   |               5 | Resolver and metadata handling                  |
 | `test_backup_restore.py`             |               4 | Backup and restore operations                   |
-| **Total**                            |         **605** |                                                 |
+| **Total**                            |         **620** |                                                 |
 
 Counts are **collected test instances**, which is what pytest reports.
 Parametrized tests expand to one instance per case, and some instances assert
@@ -677,7 +678,7 @@ The test suite does not currently cover every part of the project.
 There are currently no dedicated automated tests for:
 
 - `src/ui/first_setup.py`
-- Real API calls from `src/api/stable.py` and `src/api/unstable.py`
+- Live network calls to search.nixos.org (the suite mocks `requests`)
 - Actual `nixos-rebuild` execution inside the automated test suite
 
 The automated tests mock system-level operations such as subprocess execution and file copying. As a result, they verify how `nx` responds to those operations rather than validating every behavior of the underlying NixOS environment.
