@@ -65,16 +65,16 @@ def show_done(source: str):
     """Show a 'done' checkmark after a search completes."""
     print(f"  searching in {source}...     ✓")
 
-def show_no_results(query: str):
-    """Display a 'no results' message."""
-    print(f"\n  no results found for \"{query}\"\n")
+def show_source_select() -> int:
+    """Display the source selection menu and return the choice (0, 1, or 2).
 
-def show_source_select(stable_count: int, unstable_count: int) -> int:
-    """Display source selection menu and return user choice (0, 1, or 2)."""
+    The source is chosen before any search, so a single choice applies to
+    every package in the command and the menu cannot show hit counts.
+    """
     print()
-    print(f"  [1] Stable    ({stable_count})")
-    print(f"  [2] Unstable  ({unstable_count})")
-    print(f"  [0] Cancel")
+    print("  [1] Stable")
+    print("  [2] Unstable")
+    print("  [0] Cancel")
     print()
 
     while True:
@@ -83,101 +83,18 @@ def show_source_select(stable_count: int, unstable_count: int) -> int:
             return int(choice)
         print("  invalid — 0, 1, or 2 only")
 
-def show_results(packages: list[Package]) -> list[Package]:
-    """Open the interactive curses browser and return selected packages."""
-    return curses.wrapper(_show_results_curses, packages)
 
-def _show_results_curses(stdscr, packages: list[Package]) -> list[Package]:
-    """Interactive curses UI for browsing and selecting packages."""
-    curses.use_default_colors()
-    curses.curs_set(0)
-    stdscr.keypad(True)
+def show_missing_packages(missing: list[str]):
+    """Name every requested package the selected source could not resolve.
 
-    page = 0
-    selected = []
-    total_pages = (len(packages) + PAGE_SIZE - 1) // PAGE_SIZE
-    input_buf = ""
-
-    # Column widths for the table layout
-    COL_NUM = 5
-    COL_NAME = 32
-    COL_VERSION = 16
-    TABLE_WIDTH = COL_NUM + COL_NAME + COL_VERSION
-
-    while True:
-        stdscr.erase()
-        height, width = stdscr.getmaxyx()
-
-        # Headers
-        stdscr.addstr(0, 2, f"{'#':<{COL_NUM}}{'Name':<{COL_NAME}}{'Version':<{COL_VERSION}}")
-        stdscr.addstr(1, 2, "─" * TABLE_WIDTH)
-
-        # Packages
-        start = page * PAGE_SIZE
-        end = min(start + PAGE_SIZE, len(packages))
-
-        for i, pkg in enumerate(packages[start:end]):
-            num = start + i + 1
-            row = i + 2
-            name = (pkg.name[:28] + "..") if len(pkg.name) > 30 else pkg.name
-            version = (pkg.version or "—")[:14]
-            line = f"{num:<{COL_NUM}}{name:<{COL_NAME}}{version:<{COL_VERSION}}"
-            stdscr.addstr(row, 2, line)
-            if num == 1:
-                stdscr.addstr(row, 2 + len(line), "<-- default")
-
-        # Navigation
-        nav_row = end - start + 3
-        stdscr.addstr(nav_row, 2, f"── page {page+1}/{total_pages} ── (n) next  (p) prev")
-
-        # Selection indicator
-        selected_row = nav_row + 1
-        selected_names = ", ".join(p.name for p in selected) if selected else "none"
-        stdscr.addstr(selected_row, 2, f"selected: {selected_names}")
-
-        # Input line
-        input_row = selected_row + 2
-        stdscr.addstr(input_row, 2, f"select (y / q / 1,2,3): {input_buf}")
-
-        curses.curs_set(1)
-        stdscr.move(input_row, 2 + len(f"select (y / q / 1,2,3): {input_buf}"))
-        stdscr.refresh()
-
-        key = stdscr.getch()
-
-        if key == ord('n'):
-            if page < total_pages - 1:
-                page += 1
-            input_buf = ""
-        elif key == ord('p'):
-            if page > 0:
-                page -= 1
-            input_buf = ""
-        elif key == ord('y') or key == 10 or key == 13:
-            if input_buf:
-                try:
-                    nums = [int(x.strip()) for x in input_buf.split(',')]
-                    for num in nums:
-                        if 1 <= num <= len(packages):
-                            pkg = packages[num - 1]
-                            if pkg not in selected:
-                                selected.append(pkg)
-                except ValueError:
-                    pass
-                input_buf = ""
-            else:
-                if not selected and packages:
-                    selected = [packages[0]]
-                break
-        elif key == ord('q'):
-            selected = []
-            break
-        elif key == curses.KEY_BACKSPACE or key == 127:
-            input_buf = input_buf[:-1]
-        elif 48 <= key <= 57 or key == ord(','):
-            input_buf += chr(key)
-
-    return selected
+    The whole operation is abandoned: installing a partial set would leave
+    the configuration in a state the user did not ask for.
+    """
+    lines = ["\n  The following packages were not found in the selected source:"]
+    for name in missing:
+        lines.append(f"    - {name}")
+    lines.append("\n  No changes were made.\n")
+    print("\n".join(lines))
 
 def show_summary(packages: list) -> bool:
     """Display a summary of selected packages/outputs and ask for confirmation."""
@@ -240,23 +157,19 @@ def show_unsupported_format(status: str, block: str | None = None):
     print(f"\n  ✗ {reason}\n")
 
 
-def show_install_conflict(selected, conflicts, unstable_var: str = "unstable"):
+def show_install_conflict(conflicts, unstable_var: str = "unstable"):
     """Display a clear, grouped message when pre-validation finds conflicts.
 
-    ``selected`` is the full list of Package objects the user chose.
-    ``conflicts`` is the subset of PackageIdentity objects already present.
+    ``conflicts`` is the list of PackageIdentity objects already present in
+    the configuration.
     """
-    # Build identity lookups so we can explain *why* each conflicted.
-    by_name = {p.name: p for p in selected}
     lines = ["\n  Cannot install the following packages:"]
 
     for ident in conflicts:
-        pkg = by_name.get(ident.name)
         src_label = "stable" if ident.source == "stable" else "unstable"
-        existing = ident.reference
         lines.append(f"\n    {ident.name}")
         lines.append(f"      source: {src_label}")
-        lines.append(f"      existing reference: {existing}")
+        lines.append(f"      existing reference: {ident.reference}")
 
     lines.append("\n  No changes were made.\n")
     print("\n".join(lines))

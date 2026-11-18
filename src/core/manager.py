@@ -4,6 +4,8 @@
 from api.errors import PackageSearchError, PackageSearchFailed
 from api.stable import stable_search
 from api.unstable import unstable_search
+from models.package import Package
+
 
 def deduplicate(packages):
     """Drop duplicate packages, keyed by Nix attribute identity.
@@ -21,21 +23,39 @@ def deduplicate(packages):
             result.append(pkg)
     return result
 
-def search(pkg_name: str):
-    """Yield ``(source, packages)`` per channel, in order.
 
-    A channel that cannot be searched is skipped rather than aborting the
-    whole search, so the other channel's results still reach the user. Once
-    the generator is exhausted, :class:`PackageSearchFailed` is raised if any
-    channel failed, so the failure is reported without being silent.
+def resolve_packages(source: str, names: list[str]) -> tuple[list[Package], list[str]]:
+    """Resolve each requested name to exactly one package in one source.
+
+    Returns ``(resolved, missing)`` in the order the names were given.
+    Duplicate names are collapsed. A name with no exact match is reported
+    as missing; the caller must not fall back to another source and must
+    not install a partial set.
+
+    Matching is by canonical attribute first, then by upstream pname. The
+    pname is only a lookup key — what gets installed is always the
+    attribute. A hit count is never used as evidence that a package exists:
+    the search backend answers a nonsense query with hundreds of fuzzy
+    hits, so "there were results" does not mean "the package exists".
+
+    Raises :class:`PackageSearchFailed` when the source cannot be searched
+    at all, because a partial resolution cannot produce a complete install.
     """
-    failures = []
-    for source, fetch in (("stable", stable_search), ("unstable", unstable_search)):
+    # Resolved at call time, not import time: the module-level names are the
+    # seam tests patch, and a dict built at import would freeze over them.
+    fetch = {"stable": stable_search, "unstable": unstable_search}[source]
+    resolved: list[Package] = []
+    missing: list[str] = []
+    for name in dict.fromkeys(names):
         try:
-            packages = deduplicate(fetch(pkg_name))
+            hits = deduplicate(fetch(name))
         except PackageSearchError as exc:
-            failures.append(exc)
-            continue
-        yield source, packages
-    if failures:
-        raise PackageSearchFailed(failures)
+            raise PackageSearchFailed([exc]) from exc
+        exact = [pkg for pkg in hits if pkg.attribute == name]
+        if not exact:
+            exact = [pkg for pkg in hits if pkg.name == name]
+        if exact:
+            resolved.append(exact[0])
+        else:
+            missing.append(name)
+    return resolved, missing

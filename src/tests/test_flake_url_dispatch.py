@@ -126,7 +126,7 @@ def test_flakes_install_explicit_form(url, run_cli, cli_config):
 # ── Short flags preserved ───────────────────────────────────────────────────
 
 @pytest.mark.parametrize("argv,op,name", [
-    (["nx", "-i", "firefox"], "install", "firefox"),
+    (["nx", "-i", "firefox"], "install", ["firefox"]),
     (["nx", "-r", "firefox"], "remove", "firefox"),
 ], ids=["-i", "-r"])
 def test_short_install_and_remove(argv, op, name, run_cli, cli_config):

@@ -8,7 +8,7 @@ from importlib.metadata import version
 from pathlib import Path
 from rich.console import Console
 from core.config import CONFIG_FILE, is_setup_done, load_config
-from core.manager import search
+from core.manager import resolve_packages
 from api.errors import PackageSearchFailed
 from core.target import (
     Target,
@@ -50,10 +50,9 @@ from ui.display import (
     show_done,
     show_error,
     show_install_conflict,
-    show_no_results,
+    show_missing_packages,
     show_rebuild_done,
     show_rebuild_start,
-    show_results,
     show_results_flake,
     show_searching,
     show_source_select,
@@ -110,41 +109,40 @@ def _resolve_requested_target(requested: Target | None, config: dict) -> Target 
     return select_target(config, requested)
 
 
-def handle_install(pkg_name: str, config: dict, requested: Target | None = None):
+def handle_install(pkg_names: list[str], config: dict, requested: Target | None = None):
+    """Install one or more packages, all from a single source.
+
+    The source is chosen once and applies to every name. Each name must
+    resolve to exactly one package in that source; if any name is missing
+    the whole operation is abandoned, because a partial install would leave
+    the configuration in a state the user did not ask for.
+    """
     target = _resolve_requested_target(requested, config)
     if target is None:
         return
     info = resolve_target_info(config, target)
     config_file = info.file
     config_dir = config_file.parent
-    results = {}
-    search_failed = False
-    try:
-        for source, packages in search(pkg_name):
-            show_searching(source)
-            results[source] = packages
-            show_done(source)
-    except PackageSearchFailed as exc:
-        # The channels that did answer have already been collected above;
-        # report the failures and keep whatever results exist.
-        show_error("package search failed", exc.detail)
-        search_failed = True
 
-    if not results.get("stable") and not results.get("unstable"):
-        if not search_failed:
-            show_no_results(pkg_name)
-        return
-    source = show_source_select(len(results.get("stable", [])),
-                                len(results.get("unstable", [])))
+    source = show_source_select()
     if source == 0:
         return
-    packages = (results.get("stable", []) if source == 1
-                else results.get("unstable", []))
-    if not packages:
+    channel = "stable" if source == 1 else "unstable"
+
+    show_searching(channel)
+    try:
+        selected, missing = resolve_packages(channel, pkg_names)
+    except PackageSearchFailed as exc:
+        show_error("package search failed", exc.detail)
         return
-    selected = show_results(packages)
+    show_done(channel)
+
+    if missing:
+        show_missing_packages(missing)
+        return
     if not selected:
         return
+
     confirmed = show_summary(selected)
     if not confirmed:
         return
@@ -189,7 +187,7 @@ def handle_install(pkg_name: str, config: dict, requested: Target | None = None)
             continue
 
     if conflicts:
-        show_install_conflict(selected, conflicts, unstable_var)
+        show_install_conflict(conflicts, unstable_var)
         return
 
     try:
@@ -647,7 +645,8 @@ def main():
         )
 
     install_p = subparsers.add_parser("install")
-    install_p.add_argument("name")
+    install_p.add_argument("name", nargs="+",
+                           help="one or more package names, all from the chosen source")
     add_home_flag(install_p)
 
     remove_p = subparsers.add_parser("remove")

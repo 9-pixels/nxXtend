@@ -20,16 +20,29 @@ from core.target import Target
 
 # ── [1] Short commands reach the canonical handlers ─────────────────────────
 
-@pytest.mark.parametrize("argv,op,name", [
-    (["nx", "-i", "firefox"], "install", "firefox"),
+@pytest.mark.parametrize("argv,op,expected", [
+    (["nx", "-i", "firefox"], "install", ["firefox"]),
     (["nx", "-r", "firefox"], "remove", "firefox"),
 ], ids=[
-    "-i firefox → handle_install(firefox)",
+    "-i firefox → handle_install([firefox])",
     "-r firefox → handle_remove(firefox)",
 ])
-def test_short_commands_reach_canonical_handlers(argv, op, name, run_cli, cli_config):
+def test_short_commands_reach_canonical_handlers(argv, op, expected, run_cli, cli_config):
     _, calls, _ = run_cli(argv)
-    assert calls == [(op, (name, cli_config), {"requested": None})]
+    assert calls == [(op, (expected, cli_config), {"requested": None})]
+
+
+def test_short_install_accepts_several_names(run_cli, cli_config):
+    """`nx -i a b c` carries every name to the handler in order."""
+    _, calls, _ = run_cli(["nx", "-i", "btop", "firefox", "git"])
+    assert calls == [("install", (["btop", "firefox", "git"], cli_config),
+                               {"requested": None})]
+
+
+def test_long_install_accepts_several_names(run_cli, cli_config):
+    _, calls, _ = run_cli(["nx", "install", "btop", "firefox"])
+    assert calls == [("install", (["btop", "firefox"], cli_config),
+                               {"requested": None})]
 
 
 def test_short_upgrade_reaches_handler(run_cli, cli_config):
@@ -90,14 +103,14 @@ def test_flakes_install_explicit_form(run_cli, cli_config):
 # ── [4] -H composition ──────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("argv,op,name", [
-    (["nx", "-i", "-H", "firefox"], "install", "firefox"),
+    (["nx", "-i", "-H", "firefox"], "install", ["firefox"]),
     (["nx", "-r", "-H", "firefox"], "remove", "firefox"),
     (["nx", "-f", "-H", "github:user/repo"], "flakes_install", "github:user/repo"),
     (["nx", "-f", "-r", "-H", "github:user/repo"], "flakes_remove", "github:user/repo"),
     (["nx", "-f", "-H", "-r", "github:user/repo"], "flakes_remove", "github:user/repo"),
     (["nx", "-H", "-f", "-r", "github:user/repo"], "flakes_remove", "github:user/repo"),
-    (["nx", "install", "firefox", "-H"], "install", "firefox"),
-    (["nx", "install", "-H", "firefox"], "install", "firefox"),
+    (["nx", "install", "firefox", "-H"], "install", ["firefox"]),
+    (["nx", "install", "-H", "firefox"], "install", ["firefox"]),
 ], ids=[
     "-i -H firefox → install with requested=HOME",
     "-r -H firefox → remove with requested=HOME",

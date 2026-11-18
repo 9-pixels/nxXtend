@@ -372,20 +372,15 @@ def test_install_reports_an_add_package_exception(tmp_path):
     pkg.source = "stable"
     pkg.version = "9.0"
 
-    def mock_search(name):
-        yield "stable", [pkg]
-        yield "unstable", []
-
-    with patch("main.search", side_effect=mock_search), \
+    with patch("main.resolve_packages", return_value=([pkg], [])), \
          patch("main.show_searching"), patch("main.show_done"), \
          patch("main.show_source_select", return_value=1), \
-         patch("main.show_results", return_value=[pkg]), \
          patch("main.show_summary", return_value=True), \
          patch("main.add_package", return_value=AddResult(
              content=SYS, status="error", error="RuntimeError('boom')")), \
          patch("main.backup_files"), \
          patch("main.show_error") as mock_show:
-        main_mod.handle_install("vim", config)
+        main_mod.handle_install(["vim"], config)
 
     assert mock_show.called
     assert "boom" in str(mock_show.call_args)
@@ -407,21 +402,16 @@ def test_install_rollback_failure_is_reported():
         pkg.source = "stable"
         pkg.version = "9.0"
 
-        def mock_search(name):
-            yield "stable", [pkg]
-            yield "unstable", []
-
-        with patch("main.search", side_effect=mock_search), \
+        with patch("main.resolve_packages", return_value=([pkg], [])), \
              patch("main.show_searching"), patch("main.show_done"), \
              patch("main.show_source_select", return_value=1), \
-             patch("main.show_results", return_value=[pkg]), \
              patch("main.show_summary", return_value=True), \
              patch("main.subprocess.run") as mock_run, \
              patch("main.backup_files"), \
              patch("main.restore_files", side_effect=OSError("cannot restore")), \
              patch("main.show_error") as mock_show:
             mock_run.return_value = MagicMock(returncode=1)
-            main_mod.handle_install("vim", config)
+            main_mod.handle_install(["vim"], config)
 
     assert mock_show.called
     assert "rollback failed" in str(mock_show.call_args)

@@ -1,8 +1,7 @@
 """Beta audit 3/3 — flake discovery, install/remove integration, E2E sandbox.
 
-READ-ONLY audit: asserts CORRECT behavior; the checks that fail are known
-defects and are pinned with ``pytest.mark.xfail(strict=True, ...)`` so a
-defect that gets fixed surfaces as an XPASS and fails the suite.
+READ-ONLY audit: asserts the intended behaviour of discovery, the install
+and remove paths, and the executor sandbox.
 
 All nix subprocesses mocked; files live in tmp_path.
 """

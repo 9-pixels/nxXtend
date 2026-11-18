@@ -7,8 +7,9 @@ most common command in the tool.
 
 These tests pin the contract: every failure becomes a
 :class:`api.errors.PackageSearchError` with a user-readable reason and the
-original exception chained; a channel that fails does not hide the other
-channel's results; and ``handle_install`` reports instead of crashing.
+original exception chained; a source that cannot be searched raises
+:class:`PackageSearchFailed` instead of yielding a partial result; and
+``handle_install`` reports instead of crashing.
 """
 import io
 from contextlib import redirect_stdout
@@ -20,7 +21,7 @@ import requests
 
 from api.client import REQUEST_TIMEOUT, search
 from api.errors import PackageSearchError, PackageSearchFailed
-from core.manager import search as manager_search
+from core.manager import resolve_packages
 from models.package import Package
 
 import main as main_mod
@@ -113,33 +114,26 @@ def test_missing_metadata_does_not_crash():
     assert packages[0].name == "vim"
 
 
-# ── manager aggregation ─────────────────────────────────────────────────────
+# ── manager resolution ───────────────────────────────────────────────────────
 
-def test_both_channels_failing_yields_nothing_and_raises():
-    with patch("api.client.requests.post",
-               side_effect=requests.exceptions.ConnectionError("down")):
+def test_resolve_packages_raises_when_the_source_fails():
+    with patch("core.manager.stable_search",
+               side_effect=PackageSearchError("stable", "down")):
         with pytest.raises(PackageSearchFailed) as info:
-            list(manager_search("vim"))
-    assert len(info.value.errors) == 2
-    assert {e.source for e in info.value.errors} == {"stable", "unstable"}
+            resolve_packages("stable", ["vim"])
+    assert [e.source for e in info.value.errors] == ["stable"]
     assert "could not search stable" in info.value.detail
-    assert "could not search unstable" in info.value.detail
 
 
-def test_one_failing_channel_still_yields_the_other():
+def test_resolve_packages_does_not_fall_back_to_the_other_source():
+    """A name absent from the chosen source is missing, never rescued."""
     pkg = Package(name="vim", version="9.0", description="d",
                   source="unstable", type=None, attribute="vim")
-    with patch("core.manager.stable_search",
-               side_effect=PackageSearchError("stable", "down")), \
-         patch("core.manager.unstable_search", return_value=[pkg]):
-        yielded = []
-        with pytest.raises(PackageSearchFailed) as info:
-            for item in manager_search("vim"):
-                yielded.append(item)
-    assert len(yielded) == 1, "the working channel's results must survive"
-    assert yielded[0][0] == "unstable"
-    assert yielded[0][1][0].attribute == "vim"
-    assert [e.source for e in info.value.errors] == ["stable"]
+    with patch("core.manager.stable_search", return_value=[]), \
+         patch("core.manager.unstable_search", return_value=[pkg]) as un:
+        resolved, missing = resolve_packages("stable", ["vim"])
+    assert resolved == [] and missing == ["vim"]
+    un.assert_not_called()
 
 
 # ── the caller ──────────────────────────────────────────────────────────────
@@ -155,11 +149,12 @@ def test_handle_install_reports_a_total_search_failure(tmp_path):
 
     failure = PackageSearchFailed([
         PackageSearchError("stable", "could not reach the search service"),
-        PackageSearchError("unstable", "could not reach the search service"),
     ])
     buf = io.StringIO()
-    with patch("main.search", side_effect=failure), redirect_stdout(buf):
-        main_mod.handle_install("vim", config)
+    with patch("main.show_source_select", return_value=1), \
+         patch("main.resolve_packages", side_effect=failure), \
+         redirect_stdout(buf):
+        main_mod.handle_install(["vim"], config)
 
     out = buf.getvalue()
     assert "could not search stable" in out

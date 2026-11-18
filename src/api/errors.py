@@ -17,12 +17,11 @@ class PackageSearchError(Exception):
 
 
 class PackageSearchFailed(Exception):
-    """Aggregated search failure, raised after the working channels yielded.
+    """Aggregated search failure.
 
-    A channel that fails must not hide the other channel's results, so
-    :func:`core.manager.search` yields what it can and raises this once the
-    generator is exhausted. The caller therefore keeps every result it
-    already received and still learns that something went wrong.
+    Raised by the search layer when a channel could not be searched, so the
+    caller learns that the results it holds are incomplete instead of
+    silently proceeding with a partial set.
     """
 
     def __init__(self, errors: "list[PackageSearchError]"):

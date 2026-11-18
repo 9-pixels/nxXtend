@@ -139,12 +139,12 @@ def test_home_flag_after_positional():
 
 def test_home_request_rejected_when_hm_disabled(tmp_path):
     config = make_config(tmp_path, home_enabled=False)
-    with patch("main.search") as mock_search:
+    with patch("main.resolve_packages") as mock_resolve:
         with patch("main.backup_files") as mock_backup:
             buf = io.StringIO()
             with redirect_stdout(buf):
-                handle_install("firefox", config, requested=Target.HOME)
-    mock_search.assert_not_called()
+                handle_install(["firefox"], config, requested=Target.HOME)
+    mock_resolve.assert_not_called()
     mock_backup.assert_not_called()
     out = buf.getvalue()
     assert "home_manager_enabled" in out
@@ -167,23 +167,18 @@ def test_home_request_does_not_enter_flake_workflow(tmp_path):
     pkg.source = "stable"
     pkg.version = "1.0"
 
-    def mock_search(name):
-        yield "stable", [pkg]
-        yield "unstable", []
-
-    with patch("main.search", side_effect=mock_search):
+    with patch("main.resolve_packages", return_value=([pkg], [])):
         with patch("main.show_searching"), patch("main.show_done"):
             with patch("main.show_source_select", return_value=1):
-                with patch("main.show_results", return_value=[pkg]):
-                    with patch("main.show_summary", return_value=True):
-                        with patch("main.subprocess.run") as mock_run:
-                            mock_run.return_value = MagicMock(returncode=0)
-                            with patch("main.backup_files"):
-                                with patch("main.restore_files"):
-                                    with patch("main.add_flake") as mock_add_flake:
-                                        handle_install("firefox", config,
-                                                       requested=Target.HOME)
-                                        mock_add_flake.assert_not_called()
+                with patch("main.show_summary", return_value=True):
+                    with patch("main.subprocess.run") as mock_run:
+                        mock_run.return_value = MagicMock(returncode=0)
+                        with patch("main.backup_files"):
+                            with patch("main.restore_files"):
+                                with patch("main.add_flake") as mock_add_flake:
+                                    handle_install(["firefox"], config,
+                                                   requested=Target.HOME)
+                                    mock_add_flake.assert_not_called()
 
     assert mock_run.called
     assert "home.packages" in home.read_text()

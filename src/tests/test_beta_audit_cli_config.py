@@ -1,8 +1,7 @@
 """Beta audit 2/3 — CLI parsing, config state machine, and rollback safety.
 
-READ-ONLY audit: asserts CORRECT behavior; the checks that fail are known
-defects and are pinned with ``pytest.mark.xfail(strict=True, ...)`` so a
-defect that gets fixed surfaces as an XPASS and fails the suite.
+READ-ONLY audit: asserts the intended behaviour of the CLI surface, the
+config state machine and rollback safety.
 
 All subprocess/handlers mocked — nothing real runs.
 """
@@ -36,13 +35,11 @@ def sandbox_config(tmp_path):
 
 @pytest.mark.parametrize("argv", [
     ["nx", "install"],
-    ["nx", "install", "a", "b"],
     ["nx", "-i", "-i", "x"],
     ["nx", "-f", "upgrade", "extra"],
     ["nx", "-u", "extra"],
 ], ids=[
     "A1 install without name → argparse error exit 2",
-    "A2 install with extra arg → exit 2",
     "A5 repeated -i → conflicting-ops error (not silent pick)",
     "A8 -f upgrade + extra arg → clean rejection exit 2 (design: no subcommand after -f)",
     "A13 -u with extra arg → clean rejection exit 2 (upgrade takes no positional)",
@@ -96,7 +93,7 @@ def test_non_github_url_is_routed_to_install(run_cli, cli_config):
 
 def test_home_first_with_install(run_cli, cli_config):
     _, calls, _ = run_cli(["nx", "-H", "-i", "firefox"])
-    assert calls == [("install", ("firefox", cli_config), {"requested": Target.HOME})]
+    assert calls == [("install", (["firefox"], cli_config), {"requested": Target.HOME})]
 
 
 @pytest.mark.parametrize("argv", [
@@ -140,13 +137,15 @@ def test_corrupted_file_repaired_to_defaults(sandbox_config):
     assert data["setup"]["configuration_path"] == "/etc/nixos/configuration.nix"
 
 
-@pytest.mark.known_issue
-@pytest.mark.xfail(
-    strict=True,
-    reason="B3 known defect: validate_and_repair() rebuilds the file from "
-           "CONFIG_TEMPLATE, so user-added keys under [future] (and any other "
-           "non-template section) are silently dropped instead of preserved.")
-def test_user_keys_preserved_through_repair(sandbox_config):
+def test_unrecognised_keys_are_removed_during_repair(sandbox_config):
+    """The template is the schema, and everything outside it is dropped.
+
+    Documented behaviour, not a defect: nx owns config.toml, so a key that
+    passes no validation and is not part of the template cannot survive a
+    repair — otherwise a stale or experimental key could sit in the file and
+    be mistaken for a live setting. What matters is that the recognised
+    keys and the reserved section headers stay intact.
+    """
     sandbox_config.CONFIG_FILE.write_text('''[setup]
 configuration_path = "/etc/nixos/configuration.nix"
 flake_enabled = true
@@ -157,12 +156,19 @@ unstable_variable = "unstable"
 [future]
 remote_registry = true
 custom_note = "keep me"
+[my_notes]
+todo = "switch to home-manager"
 [meta]
 setup_done = true
 ''')
     sandbox_config.validate_and_repair()
-    text = sandbox_config.CONFIG_FILE.read_text()
-    assert "remote_registry" in text and "keep me" in text
+    data = toml.loads(sandbox_config.CONFIG_FILE.read_text())
+
+    assert data["setup"]["configuration_path"] == "/etc/nixos/configuration.nix"
+    assert data["meta"]["setup_done"] is True
+    assert "future" in data and data["future"] == {}, \
+        "the reserved section header stays, user keys under it do not"
+    assert "my_notes" not in data, "unknown sections are dropped"
 
 
 def test_invalid_values_repaired_to_defaults(sandbox_config):

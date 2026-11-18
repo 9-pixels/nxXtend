@@ -163,21 +163,16 @@ def test_install_rollback_on_rebuild_failure():
         pkg.source = "stable"
         pkg.version = "9.0"
 
-        def mock_search(name):
-            yield "stable", [pkg]
-            yield "unstable", []
-
-        with patch("main.search", side_effect=mock_search):
+        with patch("main.resolve_packages", return_value=([pkg], [])):
             with patch("main.show_searching"), patch("main.show_done"):
                 with patch("main.show_source_select", return_value=1):
-                    with patch("main.show_results", return_value=[pkg]):
-                        with patch("main.show_summary", return_value=True):
-                            with patch("main.subprocess.run") as mock_run:
-                                with patch("main.backup_files"):
-                                    with patch("main.restore_files") as mock_restore:
-                                        mock_run.return_value = MagicMock(returncode=1)
-                                        handle_install("vim", config)
-                                        mock_restore.assert_called_once()
+                    with patch("main.show_summary", return_value=True):
+                        with patch("main.subprocess.run") as mock_run:
+                            with patch("main.backup_files"):
+                                with patch("main.restore_files") as mock_restore:
+                                    mock_run.return_value = MagicMock(returncode=1)
+                                    handle_install(["vim"], config)
+                                    mock_restore.assert_called_once()
 
 
 def test_install_keeps_changes_on_success():
@@ -200,21 +195,16 @@ def test_install_keeps_changes_on_success():
         pkg.source = "stable"
         pkg.version = "9.0"
 
-        def mock_search(name):
-            yield "stable", [pkg]
-            yield "unstable", []
-
-        with patch("main.search", side_effect=mock_search):
+        with patch("main.resolve_packages", return_value=([pkg], [])):
             with patch("main.show_searching"), patch("main.show_done"):
                 with patch("main.show_source_select", return_value=1):
-                    with patch("main.show_results", return_value=[pkg]):
-                        with patch("main.show_summary", return_value=True):
-                            with patch("main.subprocess.run") as mock_run:
-                                with patch("main.backup_files"):
-                                    with patch("main.restore_files"):
-                                        mock_run.return_value = MagicMock(returncode=0)
-                                        handle_install("vim", config)
-                                        assert "vim" in config_nix.read_text()
+                    with patch("main.show_summary", return_value=True):
+                        with patch("main.subprocess.run") as mock_run:
+                            with patch("main.backup_files"):
+                                with patch("main.restore_files"):
+                                    mock_run.return_value = MagicMock(returncode=0)
+                                    handle_install(["vim"], config)
+                                    assert "vim" in config_nix.read_text()
 
 
 
