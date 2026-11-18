@@ -3,7 +3,7 @@
 <h1>nx</h1>
 
 [![License](https://img.shields.io/github/license/9-pixels/nxXtend)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-620%20collected-success)](#testing)
+[![Tests](https://img.shields.io/badge/tests-629%20collected-success)](#testing)
 [![Python](https://img.shields.io/badge/Python-3.x-blue?logo=python)](https://www.python.org/)
 [![NixOS](https://img.shields.io/badge/NixOS-supported-5277C3?logo=nixos)](https://nixos.org/)
 [<img src="https://devin.ai/assets/askdeepwiki.png" alt="Ask DeepWiki" height="20"/>](https://deepwiki.com/9-pixels/nxXtend)
@@ -559,19 +559,19 @@ the Nix development shell (`nix develop`). It is not a runtime dependency.
 
 ### Test Suite
 
-The suite contains **24 test files** and **620 collected tests**.
+The suite contains **24 test files** and **629 collected tests**.
 
 | Test file                            | Collected tests | Component                                       |
 | ------------------------------------ | --------------: | ----------------------------------------------- |
 | `test_writer_formats.py`             |              79 | Writer format contract and mutation gateway     |
-| `test_writer_targets.py`             |              52 | Writer target routing and list insertion        |
+| `test_writer_targets.py`             |              58 | Writer target routing and list insertion        |
 | `test_flake_url_dispatch.py`         |              50 | Flake reference routing                         |
 | `test_cli_shorts.py`                 |              40 | Short-flag composition and dispatch wiring      |
 | `test_discovery_fallback.py`         |              35 | Current-system fallback discovery and filtering |
-| `test_beta_audit_flakes.py`          |              34 | Flake audit findings                            |
+| `test_beta_audit_flakes.py`          |              36 | Flake audit findings                            |
 | `test_package_identity.py`           |              32 | Package identity, duplicate/collision detection |
 | `test_target.py`                     |              31 | SYSTEM/HOME target selection                    |
-| `test_error_reporting.py`            |              30 | Error reporting and failure-path contracts      |
+| `test_error_reporting.py`            |              31 | Error reporting and failure-path contracts      |
 | `test_package_attribute_identity.py` |              28 | `package_attr_name` vs `package_pname` identity |
 | `test_beta_audit_writer.py`          |              27 | Writer audit findings                           |
 | `test_beta_audit_cli_config.py`      |              26 | CLI and config audit findings                   |
@@ -587,7 +587,7 @@ The suite contains **24 test files** and **620 collected tests**.
 | `test_planner.py`                    |               8 | Action planning                                 |
 | `test_resolver.py`                   |               5 | Resolver and metadata handling                  |
 | `test_backup_restore.py`             |               4 | Backup and restore operations                   |
-| **Total**                            |         **620** |                                                 |
+| **Total**                            |         **629** |                                                 |
 
 Counts are **collected test instances**, which is what pytest reports.
 Parametrized tests expand to one instance per case, and some instances assert
@@ -596,7 +596,7 @@ test functions in the source nor the number of individual assertions.
 
 ### Known defects (expected failures)
 
-Four tests document known production defects. Each carries the custom
+One test documents a known production defect. It carries the custom
 `known_issue` marker and is pinned with `pytest.mark.xfail(strict=True, reason=...)`:
 
 - the suite stays green while the defect is open;
@@ -611,10 +611,27 @@ python -m pytest -m known_issue
 
 | Test file                       | Test                                             | Defect                                                   |
 | ------------------------------- | ------------------------------------------------ | -------------------------------------------------------- |
-| `test_beta_audit_flakes.py`     | `test_malformed_json_is_handled`                 | `json.JSONDecodeError` from `nix flake show` is uncaught |
-| `test_beta_audit_flakes.py`     | `test_repeated_install_does_not_duplicate_input` | repeated install returns a non-success status            |
-| `test_beta_audit_flakes.py`     | `test_non_flake_path_rebuild_command`            | non-flake path issues no rebuild command                 |
 | `test_beta_audit_cli_config.py` | `test_user_keys_preserved_through_repair`        | custom `[future]` keys dropped during config repair      |
+
+**Previously fixed:** `test_malformed_json_is_handled` — `nix flake show`
+exiting 0 with a non-JSON body raised `json.JSONDecodeError` out of
+`discover()`. It is now reported with the raw body shown, and discovery
+returns an empty list.
+
+**Previously fixed:** `test_repeated_install_does_not_duplicate_input` — a
+repeat install left the input unduplicated but returned `no_change`, which the
+callers treated as a reason to restore the backups and skip the rebuild, so an
+idempotent re-run was reported as a failed rebuild. `add_flake()` now reports
+`success` when the requested state is already in place, and both `add_package()`
+call sites accept `no_change`.
+
+**Previously fixed:** `test_non_flake_path_rebuild_command` — the non-flake
+install path called `add_package()` without a block, so `detect_format()`
+looked for `environment.systemPackages` inside `home.nix`, reported an
+unsupported format, restored the backups and issued no rebuild at all. The
+block is now resolved by `resolve_package_block()` from the same decision as
+the target file, and the path reports an unsupported block instead of
+swallowing it.
 
 **Previously fixed:** the `-H` routing failures and the dual-module `Target`
 crashes were caused by test files importing `Target` via

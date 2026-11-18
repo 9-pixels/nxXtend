@@ -37,6 +37,7 @@ import main as main_mod
 
 
 SYS = '{  environment.systemPackages = with pkgs; [\n    git\n  ];\n}'
+HOME = '{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    git\n  ];\n}'
 FLAKE = '{\n  inputs = {\n    nixpkgs.url = "github:NixOS/nixpkgs";\n  };\n  outputs = { nixpkgs, ... }: {\n  };\n}\n'
 
 
@@ -292,9 +293,11 @@ def _config(td, flake_enabled=True):
 
 
 def test_executor_write_failure_is_reported(tmp_path):
+    # home.nix must carry the block the target decision points at, otherwise
+    # the write is never attempted (see the refusal test below).
     Path(tmp_path, "flake.nix").write_text(FLAKE)
     Path(tmp_path, "configuration.nix").write_text(SYS)
-    Path(tmp_path, "home.nix").write_text(SYS)
+    Path(tmp_path, "home.nix").write_text(HOME)
     with patch("flakes.executor.subprocess.run") as mr, \
          patch("flakes.executor.backup_files"), \
          patch("flakes.executor.restore_files"), \
@@ -304,6 +307,30 @@ def test_executor_write_failure_is_reported(tmp_path):
         ok = execute(_plan(), _config(tmp_path))
     assert ok is False
     assert "disk full" in str(mock_show.call_args)
+
+
+def test_executor_refuses_target_file_without_matching_block(tmp_path):
+    """A home.nix with no home.packages is refused, not silently written.
+
+    The block and the target file come from the same decision: with
+    home_manager_enabled the file is home.nix and the block is home.packages.
+    A system block inside home.nix is a misconfiguration, and writing into it
+    would produce a file Nix rejects.
+    """
+    Path(tmp_path, "flake.nix").write_text(FLAKE)
+    Path(tmp_path, "configuration.nix").write_text(SYS)
+    Path(tmp_path, "home.nix").write_text(SYS)
+    buf = io.StringIO()
+    with patch("flakes.executor.subprocess.run") as mr, \
+         patch("flakes.executor.backup_files"), \
+         patch("flakes.executor.restore_files"):
+        mr.return_value = MagicMock(returncode=0)
+        with redirect_stdout(buf):
+            ok = execute(_plan(), _config(tmp_path, flake_enabled=False))
+    out = buf.getvalue()
+    assert ok is False
+    assert not mr.called, "no rebuild may be issued when the write was refused"
+    assert "home.packages" in out, out
 
 
 def test_executor_reports_an_add_package_exception(tmp_path):

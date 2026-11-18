@@ -296,7 +296,18 @@ def discover(source: FlakeSource) -> list[FlakeOutput]:
         show_error(f"nix flake show produced no output for {source.url}")
         return []
 
-    data = json.loads(result.stdout)
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        # The command exited 0 but the payload is not JSON. This is a
+        # different failure from a non-zero exit (which falls back to the
+        # per-output-type probe), so it gets its own message: the raw body is
+        # shown because it is the only evidence of what went wrong.
+        show_error(
+            f"nix flake show returned invalid JSON for {source.url}",
+            f"{exc}\n\n{result.stdout[:2000]}",
+        )
+        return []
     outputs = _outputs_from_data(data, get_current_system())
     if not outputs:
         show_error(f"no supported outputs found in {source.url}")

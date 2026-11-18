@@ -74,13 +74,13 @@ def test_discovery_adversarial(payload, length, first):
             assert getattr(out[0], key) == value
 
 
-@pytest.mark.known_issue
-@pytest.mark.xfail(
-    strict=True,
-    reason="A8 known defect: malformed JSON from `nix flake show` raises "
-           "json.JSONDecodeError that propagates uncaught out of discover(); "
-           "it should return [] or raise a controlled error instead.")
-def test_malformed_json_is_handled():
+def test_malformed_json_is_handled(capsys):
+    """A8 (fixed): `flake show` exiting 0 with a non-JSON body is reported,
+    never raised.
+
+    The raw body is the only evidence of what the command produced, so it is
+    shown verbatim alongside the parse error.
+    """
     with patch("flakes.discovery.subprocess.run") as mr:
         m = MagicMock()
         m.returncode = 0
@@ -88,6 +88,9 @@ def test_malformed_json_is_handled():
         mr.return_value = m
         out = discover(FlakeSource(url="github:x/y"))
     assert out == []
+    captured = capsys.readouterr().out
+    assert "invalid JSON" in captured, captured
+    assert "{invalid json" in captured, "the raw body must be shown"
 
 
 def test_nix_failure_returns_empty_list():
@@ -152,13 +155,14 @@ def test_add_flake_home_round_trip():
     assert st == "success"
 
 
-@pytest.mark.known_issue
-@pytest.mark.xfail(
-    strict=True,
-    reason="D2 known defect: repeated add_flake of the same input leaves the "
-           "input unduplicated but returns a non-success status instead of "
-           "\"success\".")
 def test_repeated_install_does_not_duplicate_input():
+    """D2 (fixed): a repeat install must report success.
+
+    The input is not duplicated (unchanged), and the status must be
+    "success" — callers treat anything else as a reason to restore the
+    backups and skip the rebuild, which made an idempotent re-run look like
+    a failed rebuild.
+    """
     fc, hc, st = add_flake(FLAKE, "test-flake", "github:x/y", "default", "package",
                            home_content=HOME, block="home.packages")
     fc2, hc2, st2 = add_flake(fc, "test-flake", "github:x/y", "default", "package",
@@ -237,16 +241,50 @@ def test_executor_rebuild_uses_flake_flag(tmp_path):
         f"ok={ok} cmd={cmd}"
 
 
-@pytest.mark.known_issue
-@pytest.mark.xfail(
-    strict=True,
-    reason="E2 known defect: with flake_enabled=false the executor returns "
-           "ok=False and issues no rebuild command at all, instead of "
-           "rebuilding through the non-flake path.")
 def test_non_flake_path_rebuild_command(tmp_path):
+    """E2 (fixed): a non-flake install must write the package into the target
+    file and then rebuild.
+
+    The block has to come from the same decision as the target file. The old
+    code called add_package() without a block, so detect_format() looked for
+    environment.systemPackages inside home.nix, reported an unsupported
+    format, restored the backups and issued no rebuild at all.
+    """
     setup_env(tmp_path, sys_text=SYS, home_text=HOME)
     ok, cmd = run_exec(tmp_path, make_plan(), make_config(tmp_path, flake_enabled=False))
-    assert cmd is not None, f"ok={ok} cmd={cmd}"
+    assert ok, f"ok={ok} cmd={cmd}"
+    assert cmd and cmd[0] == "nixos-rebuild" and "--flake" in cmd, f"cmd={cmd}"
+    assert Path(tmp_path, "home.nix").read_text() != HOME, \
+        "the package was not written into home.nix"
+    assert Path(tmp_path, "configuration.nix").read_text() == SYS, \
+        "the package leaked into configuration.nix"
+
+
+def test_non_flake_path_explicit_system_target(tmp_path):
+    """The same path with an explicit system target writes configuration.nix."""
+    setup_env(tmp_path, sys_text=SYS, home_text=HOME)
+    ok, cmd = run_exec(tmp_path, make_plan(), make_config(tmp_path, flake_enabled=False),
+                       target=Target.SYSTEM)
+    assert ok and cmd, f"ok={ok} cmd={cmd}"
+    assert Path(tmp_path, "configuration.nix").read_text() != SYS
+    assert Path(tmp_path, "home.nix").read_text() == HOME
+
+
+def test_non_flake_repeated_install_is_not_a_failure(tmp_path):
+    """The non-flake counterpart of D2.
+
+    A package already in the list yields "no_change" from add_package(). That
+    is the requested state, not a failure: the old check restored the backups
+    and skipped the rebuild, so a harmless re-run was reported as a broken
+    rebuild.
+    """
+    setup_env(tmp_path, sys_text=SYS, home_text=HOME)
+    plan = make_plan()
+    ok, cmd = run_exec(tmp_path, plan, make_config(tmp_path, flake_enabled=False))
+    assert ok and cmd, f"first install: ok={ok} cmd={cmd}"
+    ok2, cmd2 = run_exec(tmp_path, plan, make_config(tmp_path, flake_enabled=False))
+    assert ok2, f"repeat install reported a failure: ok={ok2}"
+    assert cmd2, "a repeat install must still rebuild"
 
 
 def test_executor_missing_flake_nix(tmp_path):

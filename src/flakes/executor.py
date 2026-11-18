@@ -8,7 +8,8 @@ from core.target import Target, SYSTEM_BLOCK, HOME_BLOCK
 from ui.display import show_error, show_unsupported_format
 from core.writer import (
     read_config, backup_files, restore_files,
-    add_flake, add_flake_overlay, add_package, build_package_reference, detect_format
+    add_flake, add_flake_overlay, add_package, build_package_reference,
+    detect_format, resolve_package_block,
 )
 
 
@@ -51,9 +52,10 @@ def execute(plan: InstallationPlan, config: dict, target: Target | None = None) 
     else:
         if home_manager_enabled:
             target_file = Path(config["setup"]["home_manager_path"])
+            target_block = HOME_BLOCK
         else:
             target_file = Path(config["setup"]["configuration_path"])
-        target_block = None  # legacy auto-detect inside the writer
+            target_block = SYSTEM_BLOCK
 
     if flake_enabled:
         flake_file = Path(config["setup"]["flake_path"])
@@ -106,13 +108,21 @@ def execute(plan: InstallationPlan, config: dict, target: Target | None = None) 
                 show_unsupported_format(add_status, target_block)
                 return False
         else:
-            # Non-flake install: add package directly to configuration.nix
-            fmt = detect_format(target_content)
+            # Non-flake install: add the package directly to the target file.
+            # The block must come from the same decision as the file itself —
+            # resolving it here (rather than letting add_package default to the
+            # system block) is what makes a home.nix target writable.
+            block = resolve_package_block(target_content, target_block)
+            fmt = detect_format(target_content, block)
             pkg_ref = build_package_reference(plan.output.name, "stable", fmt, unstable_var)
-            result = add_package(target_content, pkg_ref, config_dir)
-            if result.status != "success":
+            result = add_package(target_content, pkg_ref, config_dir, block)
+            if result.status not in ("success", "no_change"):
                 if result.error:
                     show_error("failed to modify the configuration", result.error)
+                else:
+                    # An unsupported/missing block must be explained, not
+                    # swallowed — the flake path reports it the same way.
+                    show_unsupported_format(result.status, block)
                 restore_files(files)
                 return False
             target_content = result.content

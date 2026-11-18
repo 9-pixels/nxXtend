@@ -201,7 +201,9 @@ def handle_install(pkg_name: str, config: dict, requested: Target | None = None)
     for pkg in selected:
         pkg_ref = build_package_reference(pkg.attribute, pkg.source, fmt, unstable_var)
         result = add_package(content, pkg_ref, config_dir, info.block)
-        if result.status != "success":
+        if result.status not in ("success", "no_change"):
+            # "no_change" means the package was already in the list — the
+            # requested state is in place, not a failure.
             # A raised exception carries its own text; an unsupported format
             # is a user-actionable condition with a dedicated explanation.
             if result.error:

@@ -15,6 +15,7 @@ import pytest
 from core.writer import (
     add_package, remove_package, is_package_exists, detect_format,
     add_flake_package, add_flake_overlay, remove_flake_reference,
+    resolve_package_block,
 )
 
 SYSTEM = "environment.systemPackages"
@@ -450,3 +451,65 @@ def test_add_flake_overlay_duplicate_is_noop():
         '{ config, pkgs, inputs, ... }:\n{\n  nixpkgs.overlays = [];\n}\n',
         "example", "default")
     assert add_flake_overlay(once, "example", "default") == once
+
+
+# --- resolve_package_block -------------------------------------------------
+#
+# The block a write targets must come from the same decision as the target
+# FILE. Before this helper existed, the non-flake install path called
+# add_package() without a block, so detect_format() looked for
+# environment.systemPackages inside home.nix, reported an unsupported
+# format, rolled back and issued no rebuild (defect E2).
+
+BARE = '''{ pkgs, ... }:
+{
+}
+'''
+
+EMPTY_HOME = '''{ pkgs, ... }:
+{
+  home.packages = [ ];
+}
+'''
+
+
+def test_resolve_block_explicit_wins():
+    """An explicit block always wins, whichever block the file contains."""
+    assert resolve_package_block(HOME_WITH_PKGS, SYSTEM) == SYSTEM
+    assert resolve_package_block(SYS_WITH_PKGS, HOME) == HOME
+
+
+def test_resolve_block_auto_prefers_home():
+    """Without an explicit block, a present home block is chosen."""
+    assert resolve_package_block(HOME_WITH_PKGS, None) == HOME
+    assert resolve_package_block(HOME_PLAIN, None) == HOME
+
+
+def test_resolve_block_auto_falls_back_to_system():
+    """Only a system block, or neither block, resolves to the system block."""
+    assert resolve_package_block(SYS_WITH_PKGS, None) == SYSTEM
+    assert resolve_package_block(BARE, None) == SYSTEM
+
+
+def test_resolve_block_keeps_unsupported_home():
+    """A home block in an unsupported format is still chosen.
+
+    The unsupported status has to surface; a silent fallback to the system
+    block would hide it and write into the wrong place.
+    """
+    assert detect_format(EMPTY_HOME, HOME) == "empty"
+    assert resolve_package_block(EMPTY_HOME, None) == HOME
+
+
+def test_add_flake_package_auto_targets_home():
+    """The flake path keeps its documented auto-detect through the helper."""
+    result = add_flake_package(HOME_WITH_PKGS, "repo", "vim")
+    assert result.status == "success"
+    assert "inputs.repo.packages" in result.content
+    assert "home.packages" in result.content
+
+
+def test_add_flake_package_explicit_block_wins():
+    """An explicit block on the flake path is honoured, home present or not."""
+    result = add_flake_package(HOME_WITH_PKGS, "repo", "vim", block=SYSTEM)
+    assert result.status == "unsupported_missing"

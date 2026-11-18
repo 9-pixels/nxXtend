@@ -632,13 +632,32 @@ def add_flake_to_outputs(content: str, flake_name: str) -> str:
     return content[:match.start(1)] + new_inner + content[match.end(1):]
 
 
+def resolve_package_block(content: str, block: str | None) -> str:
+    """Return the package block a write should target.
+
+    An explicit block always wins. Without one, ``home.packages`` is used
+    when the file has it, falling back to ``environment.systemPackages``.
+    The Home→System fallback applies only when the home block is actually
+    MISSING — a home block that exists in an unsupported format keeps its
+    unsupported status instead of being hidden by a silent fallback.
+
+    Both the flake and the non-flake install paths must resolve the block
+    here: the target FILE and the block written into it have to come from
+    the same decision, otherwise a home.nix can be paired with a system
+    block and the write is reported as an unsupported format.
+    """
+    if block is not None:
+        return block
+    if detect_format(content, "home.packages") != "missing":
+        return "home.packages"
+    return "environment.systemPackages"
+
+
 def add_flake_package(content: str, flake_name: str, pkg_attr: str, system_var: str = "pkgs.stdenv.hostPlatform.system", block: str | None = None) -> AddResult:
     """Add a flake package reference to a package block.
 
     block=None → legacy auto-detect: home.packages first, then the
-    systemPackages default. The Home→System fallback applies only when
-    the home block is actually MISSING — a home block that exists in an
-    unsupported format keeps its unsupported status (no silent fallback).
+    systemPackages default (see resolve_package_block).
 
     block="home.packages" / "environment.systemPackages" → target that
     block explicitly; never falls back elsewhere.
@@ -648,14 +667,7 @@ def add_flake_package(content: str, flake_name: str, pkg_attr: str, system_var: 
     """
     pkg_line = f"inputs.{flake_name}.packages.${{{system_var}}}.{pkg_attr}"
 
-    if block is not None:
-        return add_package(content, pkg_line, Path("."), block)
-
-    home_fmt = detect_format(content, "home.packages")
-    if home_fmt != "missing":
-        # home.packages exists (supported or not) — it keeps the target.
-        return add_package(content, pkg_line, Path("."), "home.packages")
-    return add_package(content, pkg_line, Path("."))
+    return add_package(content, pkg_line, Path("."), resolve_package_block(content, block))
 
 
 def _find_brace_end(content: str, open_pos: int) -> int | None:
@@ -1053,10 +1065,10 @@ def add_flake(
     when provided, else into flake_content. `block` names the package
     block inside the target file; None keeps legacy auto-detection.
 
-    Returns (flake_content, home_content, status). status is the
-    writer-level result status of the package-reference operation
-    ("success" for non-package types); callers must check it before
-    rebuilding.
+    Returns (flake_content, home_content, status). status is "success" when
+    the requested state is in place — including the case where the reference
+    was already present — or a writer status describing why it could not be
+    reached. Callers must check it before rebuilding.
     """
     status = "success"
     if not is_input_exists(flake_content, flake_name):
@@ -1081,6 +1093,12 @@ def add_flake(
         if home_content is not None:
             home_content = add_home_flake_module(home_content, flake_name, module_name)
     
+    if status == "no_change":
+        # The reference was already present, so the requested state is in
+        # place. Callers treat anything but "success" as a reason to restore
+        # the backups and skip the rebuild, which made a harmless repeat
+        # install look like a failed rebuild (defect D2).
+        status = "success"
     return flake_content, home_content, status
 
 
