@@ -372,22 +372,22 @@ def handle_flakes_install(url: str, config: dict, requested: Target | None = Non
         console.print(f"\n  no supported outputs found in {url}\n")
         return
     # 4 — user selection
-    selected_list = show_results_flake(supported)
-    if not selected_list:
+    selected = show_results_flake(supported)
+    if not selected:
         return
-    selected = selected_list[0]
 
-    # 5 — planner
-    plan = build_plan(source, selected, system)
+    # 5 — planner: one plan per selected output
+    plans = [build_plan(source, output, system) for output in selected]
 
     # 6 — display plan and confirmation
-    confirmed = show_summary([selected])
+    confirmed = show_summary(selected)
     if not confirmed:
         return
 
-    # 7 — executor (target flows through: input → flake.nix, reference → target file)
+    # 7 — executor: the whole selection is a single transaction
+    #     (target flows through: input → flake.nix, references → target file)
     show_rebuild_start()
-    success = execute(plan, config, target=target)
+    success = execute(plans, config, target=target)
     show_rebuild_done(success)
 
 def handle_flakes_remove(name: str, config: dict, requested: Target | None = None):

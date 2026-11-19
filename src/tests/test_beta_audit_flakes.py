@@ -24,6 +24,20 @@ import main as main_mod
 
 
 FLAKE = '{\n  inputs = {\n    nixpkgs.url = "github:NixOS/nixpkgs";\n  };\n  outputs = { nixpkgs, ... }: {\n  };\n}\n'
+# A flake with a nixosSystem block, so nixosModules have a modules list to
+# land in (add_flake_module is fail-safe when there is none).
+FLAKE_MODULES = (
+    "{\n"
+    "  inputs = {};\n"
+    "  outputs = { nixpkgs, ... }:\n"
+    "  {\n"
+    "    nixosConfigurations.nixos = nixpkgs.lib.nixosSystem {\n"
+    '      system = "x86_64-linux";\n'
+    "      modules = [ ./configuration.nix ];\n"
+    "    };\n"
+    "  };\n"
+    "}\n"
+)
 HOME = '{ pkgs, ... }:\n{\n  home.packages = with pkgs; [\n    git\n  ];\n}\n'
 SYS = '{ pkgs, ... }:\n{\n  environment.systemPackages = with pkgs; [\n    git\n  ];\n}\n'
 
@@ -228,7 +242,7 @@ def run_exec(td, plan, config, target=None):
          patch("flakes.executor.backup_files"), \
          patch("flakes.executor.restore_files"):
         mr.return_value = MagicMock(returncode=0)
-        ok = execute(plan, config, target=target)
+        ok = execute([plan], config, target=target)
         rebuild_cmd = mr.call_args[0][0] if mr.called else None
     return ok, rebuild_cmd
 
@@ -311,14 +325,19 @@ def test_executor_overlay_with_home_target(tmp_path):
 
 # ── [F] E2E sandbox: full install→remove cycle via handlers ────────────────
 
-def run_handler_install(url, config, requested=None):
-    outs = [FlakeOutput(name="default", type="packages",
-                        attribute="packages.x86_64-linux.default")]
+def run_handler_install(url, config, requested=None, outputs=None):
+    """Drive handle_flakes_install end to end with the terminal mocked.
+
+    ``outputs`` is what the browser returns, so a test can select several.
+    Returns the mocked rebuild call.
+    """
+    outs = outputs or [FlakeOutput(name="default", type="packages",
+                                   attribute="packages.x86_64-linux.default")]
     with patch("main.parse_flake_url", return_value=FlakeSource(url=url)), \
          patch("main.get_metadata", return_value=FlakeSource(url=url)), \
          patch("main.discover", return_value=outs), \
          patch("main.get_current_system", return_value="x86_64-linux"), \
-         patch("main.show_results_flake", return_value=[outs[0]]), \
+         patch("main.show_results_flake", return_value=outs), \
          patch("main.show_summary", return_value=True), \
          patch("main.show_rebuild_start"), patch("main.show_rebuild_done"), \
          patch("main.subprocess.run") as mr, \
@@ -328,6 +347,7 @@ def run_handler_install(url, config, requested=None):
          redirect_stdout(io.StringIO()):
         mr.return_value = MagicMock(returncode=0)
         main_mod.handle_flakes_install(url, config, requested=requested)
+    return mr
 
 
 def test_e2e_install_system(tmp_path):
@@ -348,6 +368,80 @@ def test_e2e_install_home(tmp_path):
     sys_txt = Path(tmp_path, "configuration.nix").read_text()
     assert "inputs.repo.packages" in home_txt
     assert sys_txt == SYS
+
+
+def _pkgs(*names):
+    return [FlakeOutput(name=n, type="packages",
+                        attribute=f"packages.x86_64-linux.{n}") for n in names]
+
+
+def test_e2e_several_outputs_are_all_installed(tmp_path):
+    """Every selected output reaches the configuration, not just the first."""
+    setup_env(tmp_path, sys_text=SYS, home_text=HOME)
+    mr = run_handler_install("github:test/repo", make_config(tmp_path),
+                             outputs=_pkgs("alpha", "beta", "gamma"))
+    sys_txt = Path(tmp_path, "configuration.nix").read_text()
+    for name in ("alpha", "beta", "gamma"):
+        assert f"inputs.repo.packages.${{pkgs.stdenv.hostPlatform.system}}.{name}" in sys_txt, \
+            f"{name} was not installed"
+    flake_txt = Path(tmp_path, "flake.nix").read_text()
+    assert flake_txt.count('url = "github:test/repo"') == 1, \
+        "the flake input must be declared once for the whole selection"
+
+
+def test_e2e_several_outputs_are_one_transaction(tmp_path):
+    setup_env(tmp_path, sys_text=SYS, home_text=HOME)
+    mr = run_handler_install("github:test/repo", make_config(tmp_path),
+                             outputs=_pkgs("alpha", "beta", "gamma"))
+    assert mr.call_count == 1, "one selection must rebuild once"
+
+
+def test_e2e_mixed_output_types(tmp_path):
+    setup_env(tmp_path, sys_text=SYS, home_text=HOME, flake_text=FLAKE_MODULES)
+    outs = _pkgs("alpha") + [
+        FlakeOutput(name="base", type="nixosModules", attribute="nixosModules.base"),
+        FlakeOutput(name="toolsAlias", type="overlays", attribute="overlays.toolsAlias"),
+    ]
+    run_handler_install("github:test/repo", make_config(tmp_path), outputs=outs)
+    sys_txt = Path(tmp_path, "configuration.nix").read_text()
+    flake_txt = Path(tmp_path, "flake.nix").read_text()
+    assert "inputs.repo.packages.${pkgs.stdenv.hostPlatform.system}.alpha" in sys_txt
+    assert "repo.nixosModules.base" in flake_txt
+    assert "inputs.repo.overlays.toolsAlias" in sys_txt
+
+
+def test_e2e_failure_midway_installs_nothing(tmp_path):
+    """If the second output cannot be written, the whole selection is dropped."""
+    from flakes import executor as executor_mod
+    real_add_flake = executor_mod.add_flake
+    seen = []
+
+    def flaky_add_flake(*args, **kwargs):
+        seen.append(kwargs.get("pkg_attr"))
+        if len(seen) == 2:
+            return "", None, "unsupported_missing"
+        return real_add_flake(*args, **kwargs)
+
+    setup_env(tmp_path, sys_text=SYS, home_text=HOME)
+    outs = _pkgs("alpha", "beta")
+    with patch("main.parse_flake_url", return_value=FlakeSource(url="github:test/repo")), \
+         patch("main.get_metadata", return_value=FlakeSource(url="github:test/repo")), \
+         patch("main.discover", return_value=outs), \
+         patch("main.get_current_system", return_value="x86_64-linux"), \
+         patch("main.show_results_flake", return_value=outs), \
+         patch("main.show_summary", return_value=True), \
+         patch("main.show_rebuild_start"), patch("main.show_rebuild_done"), \
+         patch("flakes.executor.add_flake", side_effect=flaky_add_flake), \
+         patch("flakes.executor.backup_files"), \
+         patch("flakes.executor.restore_files") as restore, \
+         patch("flakes.executor.subprocess.run") as mr, \
+         redirect_stdout(io.StringIO()):
+        mr.return_value = MagicMock(returncode=0)
+        main_mod.handle_flakes_install("github:test/repo", make_config(tmp_path))
+    assert not mr.called, "no rebuild may run when a plan failed"
+    assert restore.called, "the backups must be restored"
+    assert "inputs.repo.packages" not in Path(tmp_path, "flake.nix").read_text()
+    assert "inputs.repo.packages" not in Path(tmp_path, "configuration.nix").read_text()
 
 
 def test_e2e_unmanaged_reference_refused(tmp_path):

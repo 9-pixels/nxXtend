@@ -38,7 +38,7 @@ def test_unsupported_returns_false_without_rebuild():
     plan = make_plan("unsupported")
     config = {"setup": {"flake_enabled": False}}
     with patch("flakes.executor.subprocess.run") as mock_run:
-        result = execute(plan, config)
+        result = execute([plan], config)
     assert result is False
     mock_run.assert_not_called()
 
@@ -47,7 +47,7 @@ def test_configure_home_returns_false_without_rebuild():
     plan = make_plan("configure_home", pkg_type="homeManagerModules", name="my-mod")
     config = {"setup": {"flake_enabled": False}}
     with patch("flakes.executor.subprocess.run") as mock_run:
-        result = execute(plan, config)
+        result = execute([plan], config)
     assert result is False
     mock_run.assert_not_called()
 
@@ -56,7 +56,7 @@ def test_missing_flake_file_returns_false():
     plan = make_plan("install")
     with tempfile.TemporaryDirectory() as tmpdir:
         config = make_config(tmpdir, flake_enabled=True)
-        result = execute(plan, config)
+        result = execute([plan], config)
     assert result is False
 
 
@@ -71,7 +71,7 @@ def test_install_works_with_flakes_disabled():
         with patch("flakes.executor.subprocess.run") as mock_run:
             with patch("flakes.executor.backup_files"):
                 mock_run.return_value = MagicMock(returncode=0)
-                result = execute(plan, config)
+                result = execute([plan], config)
         assert result is True
 
 
@@ -89,7 +89,7 @@ def test_install_works_with_flakes_enabled():
             with patch("flakes.executor.backup_files"):
                 with patch("flakes.executor.restore_files"):
                     mock_run.return_value = MagicMock(returncode=0)
-                    result = execute(plan, config)
+                    result = execute([plan], config)
         assert result is True
 
 
@@ -107,7 +107,7 @@ def test_flake_install_unsupported_format_rolls_back_no_rebuild():
             with patch("flakes.executor.backup_files"):
                 with patch("flakes.executor.restore_files") as mock_restore:
                     mock_run.return_value = MagicMock(returncode=0)
-                    result = execute(plan, config)
+                    result = execute([plan], config)
         assert result is False, "must not succeed on unsupported format"
         mock_restore.assert_called_once(), "backups must be restored"
         mock_run.assert_not_called(), "rebuild must not happen"
@@ -126,7 +126,7 @@ def test_install_works_with_home_manager_enabled():
             with patch("flakes.executor.backup_files"):
                 with patch("flakes.executor.restore_files"):
                     mock_run.return_value = MagicMock(returncode=0)
-                    result = execute(plan, config)
+                    result = execute([plan], config)
         assert result is True
 
 
@@ -144,7 +144,7 @@ def test_configure_nixos_module():
             with patch("flakes.executor.backup_files"):
                 with patch("flakes.executor.restore_files"):
                     mock_run.return_value = MagicMock(returncode=0)
-                    result = execute(plan, config)
+                    result = execute([plan], config)
         assert result is True
 
 
@@ -160,7 +160,7 @@ def test_overlay():
             with patch("flakes.executor.backup_files"):
                 with patch("flakes.executor.restore_files"):
                     mock_run.return_value = MagicMock(returncode=0)
-                    result = execute(plan, config)
+                    result = execute([plan], config)
         assert result is True
 
 
@@ -181,7 +181,7 @@ def test_flake_path_from_config():
             with patch("flakes.executor.backup_files"):
                 with patch("flakes.executor.restore_files"):
                     mock_run.return_value = MagicMock(returncode=0)
-                    result = execute(plan, config)
+                    result = execute([plan], config)
         assert result is True
 
 
@@ -215,7 +215,7 @@ def _run_install(
         with patch("flakes.executor.backup_files"):
             with patch("flakes.executor.restore_files"):
                 mock_run.return_value = MagicMock(returncode=0)
-                result = execute(plan, config, target=target)
+                result = execute([plan], config, target=target)
     sys_out = (
         (Path(tmpdir) / "configuration.nix").read_text()
         if (Path(tmpdir) / "configuration.nix").exists()

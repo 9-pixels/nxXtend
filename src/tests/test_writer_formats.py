@@ -338,7 +338,7 @@ def test_executor_unsupported_format_gate(tmp_path):
          patch("flakes.executor.backup_files") as mb, \
          patch("flakes.executor.restore_files") as mrb:
         mr.return_value = MagicMock(returncode=0)
-        ok = execute(_make_plan(), cfg, target=Target.HOME)
+        ok = execute([_make_plan()], cfg, target=Target.HOME)
     assert ok is False
     assert not mr.called
     assert mrb.called

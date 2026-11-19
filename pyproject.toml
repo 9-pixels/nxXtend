@@ -61,6 +61,3 @@ where = ["src"]
 pythonpath = ["src"]
 testpaths = ["src/tests"]
 addopts = "-ra --strict-markers"
-markers = [
-  "known_issue: expected failure documenting a known defect (strict xfail)",
-]

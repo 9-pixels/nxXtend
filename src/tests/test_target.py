@@ -231,5 +231,5 @@ def test_executor_flake_enabled_alone_decides_flake_workflow(tmp_path):
         mock_run.return_value = MagicMock(returncode=0)
         with patch("flakes.executor.backup_files"):
             with patch("flakes.executor.add_flake") as mock_add_flake:
-                execute(plan, config)
+                execute([plan], config)
                 mock_add_flake.assert_not_called()

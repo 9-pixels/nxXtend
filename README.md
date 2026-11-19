@@ -3,7 +3,7 @@
 <h1>nx</h1>
 
 [![License](https://img.shields.io/github/license/9-pixels/nxXtend)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-629%20collected-success)](#testing)
+[![Tests](https://img.shields.io/badge/tests-645%20collected-success)](#testing)
 [![Python](https://img.shields.io/badge/Python-3.x-blue?logo=python)](https://www.python.org/)
 [![NixOS](https://img.shields.io/badge/NixOS-supported-5277C3?logo=nixos)](https://nixos.org/)
 [<img src="https://devin.ai/assets/askdeepwiki.png" alt="Ask DeepWiki" height="20"/>](https://deepwiki.com/9-pixels/nxXtend)
@@ -162,7 +162,7 @@ The configuration can be changed later by running `nx setup` again, or manually 
 | Command                   | Description                                           |
 | ------------------------- | ----------------------------------------------------- |
 | `nx setup`                | Interactive first-time configuration                  |
-| `nx install <package>`    | Install a package from nixpkgs                        |
+| `nx install <package>...` | Install one or more packages from nixpkgs             |
 | `nx remove <package>`     | Remove a package                                      |
 | `nx upgrade`              | Rebuild and switch to the current NixOS configuration |
 | `nx flakes <url>`         | Install from a Flake URL                              |
@@ -189,6 +189,7 @@ Short flags are **composable** — they can appear in any order:
 
 ```bash
 nx -i firefox              # install firefox
+nx -i btop firefox git     # install all three, from one source
 nx -r firefox              # remove firefox
 nx -u                      # upgrade
 nx -f github:x/y           # flakes install
@@ -196,6 +197,20 @@ nx -f -i github:x/y        # flakes install (explicit)
 nx -f -r myflake           # flakes remove
 nx -f -u                   # flakes upgrade
 ```
+
+> **The package browser is temporarily removed.**
+>
+> `nx install` no longer opens an interactive list of search results. Every
+> name you type must resolve to exactly one package by its canonical
+> attribute; if any name is missing, nx names it and installs nothing.
+>
+> **Why:** the search backend answers even a nonsense query with hundreds of
+> fuzzy hits, so an interactive picker used to be the only way to choose the
+> right package — and that picker cannot serve a multi-package command, where
+> you have already named exactly what you want. With no stable replacement
+> for result discovery decided yet (a separate `nx search` is the obvious
+> candidate), the browser is removed for now rather than kept half-alive.
+> The Flake browser is unaffected.
 
 ### The `-H` flag (Home Manager)
 
@@ -218,6 +233,15 @@ nx -H -f github:x/y
 nx upgrade -H          # rejected — rebuild is system-wide
 nx flakes upgrade -H   # rejected — rebuild is system-wide
 ```
+
+### Selecting several Flake outputs
+
+`nx -f <url>` opens the Flake browser on everything the Flake provides. Select
+as many outputs as you want — `1,2,3` or `all` — and the whole selection is
+installed as **one** transaction: one backup, one write, one rebuild. The
+Flake input is declared once and each output adds its own reference. If any
+selected output cannot be written, nothing is installed and the backups are
+restored.
 
 ### Global flags
 
@@ -525,6 +549,8 @@ This allows manually edited configuration files to remain usable without replaci
 
 The configuration template also contains sections reserved for future features. These sections are currently informational and are not used by the running workflows.
 
+The template is the schema: a key that is not part of it does not survive a repair, so a stale or experimental key cannot linger in the file and be mistaken for a live setting. Keys of your own are therefore not preserved — keep them elsewhere.
+
 </details>
 
 <details>
@@ -559,59 +585,50 @@ the Nix development shell (`nix develop`). It is not a runtime dependency.
 
 ### Test Suite
 
-The suite contains **24 test files** and **629 collected tests**.
+The suite contains **25 test files** and **645 collected tests**.
 
-| Test file                            | Collected tests | Component                                       |
-| ------------------------------------ | --------------: | ----------------------------------------------- |
-| `test_writer_formats.py`             |              79 | Writer format contract and mutation gateway     |
-| `test_writer_targets.py`             |              58 | Writer target routing and list insertion        |
-| `test_flake_url_dispatch.py`         |              50 | Flake reference routing                         |
-| `test_cli_shorts.py`                 |              40 | Short-flag composition and dispatch wiring      |
-| `test_discovery_fallback.py`         |              35 | Current-system fallback discovery and filtering |
-| `test_beta_audit_flakes.py`          |              36 | Flake audit findings                            |
-| `test_package_identity.py`           |              32 | Package identity, duplicate/collision detection |
-| `test_target.py`                     |              31 | SYSTEM/HOME target selection                    |
-| `test_error_reporting.py`            |              31 | Error reporting and failure-path contracts      |
-| `test_package_attribute_identity.py` |              28 | `package_attr_name` vs `package_pname` identity |
-| `test_beta_audit_writer.py`          |              27 | Writer audit findings                           |
-| `test_beta_audit_cli_config.py`      |              26 | CLI and config audit findings                   |
-| `test_main.py`                       |              24 | CLI workflows and package operations            |
-| `test_nixos_modules_scoping.py`      |              22 | Scoped `nixosModules` insertion                 |
-| `test_executor.py`                   |              20 | Flake execution workflows                       |
-| `test_remove_flake.py`               |              15 | Flake removal, backup, and rollback             |
-| `test_api_errors.py`                 |              15 | Package search failure handling                 |
-| `test_flakes_remove_target.py`       |              13 | Target-aware Flake removal                      |
-| `test_config.py`                     |              12 | Configuration validation and repair             |
-| `test_license_headers.py`            |              10 | License header guard                            |
-| `test_discovery.py`                  |               8 | Flake output discovery and classification       |
-| `test_planner.py`                    |               8 | Action planning                                 |
-| `test_resolver.py`                   |               5 | Resolver and metadata handling                  |
-| `test_backup_restore.py`             |               4 | Backup and restore operations                   |
-| **Total**                            |         **629** |                                                 |
+| Test file                             | Collected tests | Component                                       |
+|---------------------------------------|----------------:|------------------------------------------------|
+| `test_writer_formats.py`              |             79 | Writer format contract and mutation gateway     |
+| `test_writer_targets.py`              |             58 | Writer target routing and list insertion        |
+| `test_flake_url_dispatch.py`          |             50 | Flake reference routing                         |
+| `test_multi_install.py`               |             11 | Multi-package install and exact-name resolution |
+| `test_cli_shorts.py`                  |             42 | Short-flag composition and dispatch wiring      |
+| `test_discovery_fallback.py`          |             35 | Current-system fallback discovery and filtering |
+| `test_beta_audit_flakes.py`           |             40 | Flake audit findings                            |
+| `test_package_identity.py`            |             32 | Package identity, duplicate/collision detection |
+| `test_target.py`                      |             31 | SYSTEM/HOME target selection                    |
+| `test_error_reporting.py`             |             31 | Error reporting and failure-path contracts      |
+| `test_package_attribute_identity.py`  |             28 | `package_attr_name` vs `package_pname` identity |
+| `test_beta_audit_writer.py`           |             27 | Writer audit findings                           |
+| `test_beta_audit_cli_config.py`       |             25 | CLI and config audit findings                   |
+| `test_main.py`                        |             24 | CLI workflows and package operations            |
+| `test_nixos_modules_scoping.py`       |             22 | Scoped `nixosModules` insertion                 |
+| `test_executor.py`                    |             20 | Flake execution workflows                       |
+| `test_remove_flake.py`                |             15 | Flake removal, backup, and rollback             |
+| `test_api_errors.py`                  |             15 | Package search failure handling                 |
+| `test_flakes_remove_target.py`        |             13 | Target-aware Flake removal                      |
+| `test_config.py`                      |             12 | Configuration validation and repair             |
+| `test_license_headers.py`             |             10 | License header guard                            |
+| `test_discovery.py`                   |              8 | Flake output discovery and classification       |
+| `test_planner.py`                     |              8 | Action planning                                 |
+| `test_resolver.py`                    |              5 | Resolver and metadata handling                  |
+| `test_backup_restore.py`              |              4 | Backup and restore operations                   |
+| **Total**                             |        **645** |                                                 |
 
 Counts are **collected test instances**, which is what pytest reports.
 Parametrized tests expand to one instance per case, and some instances assert
 more than one related property, so the instance count is neither the number of
 test functions in the source nor the number of individual assertions.
 
-### Known defects (expected failures)
+### Known defects
 
-One test documents a known production defect. It carries the custom
-`known_issue` marker and is pinned with `pytest.mark.xfail(strict=True, reason=...)`:
+**None open.** The suite carries no expected failures.
 
-- the suite stays green while the defect is open;
-- if the underlying behaviour is fixed, the test **XPASSes** and the suite
-  fails, forcing the marker to be removed and the fix acknowledged.
-
-Run only these tests with:
-
-```bash
-python -m pytest -m known_issue
-```
-
-| Test file                       | Test                                             | Defect                                                   |
-| ------------------------------- | ------------------------------------------------ | -------------------------------------------------------- |
-| `test_beta_audit_cli_config.py` | `test_user_keys_preserved_through_repair`        | custom `[future]` keys dropped during config repair      |
+Earlier audits pinned genuine defects with `pytest.mark.xfail(strict=True)`, so
+fixing one surfaced as an XPASS and forced the marker off. That policy is
+retired: every defect below was fixed, and each test now asserts the correct
+behaviour normally.
 
 **Previously fixed:** `test_malformed_json_is_handled` — `nix flake show`
 exiting 0 with a non-JSON body raised `json.JSONDecodeError` out of

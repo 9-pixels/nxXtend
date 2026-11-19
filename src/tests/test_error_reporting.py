@@ -304,7 +304,7 @@ def test_executor_write_failure_is_reported(tmp_path):
          patch("pathlib.Path.write_text", side_effect=OSError("disk full")), \
          patch("flakes.executor.show_error") as mock_show:
         mr.return_value = MagicMock(returncode=0)
-        ok = execute(_plan(), _config(tmp_path))
+        ok = execute([_plan()], _config(tmp_path))
     assert ok is False
     assert "disk full" in str(mock_show.call_args)
 
@@ -326,7 +326,7 @@ def test_executor_refuses_target_file_without_matching_block(tmp_path):
          patch("flakes.executor.restore_files"):
         mr.return_value = MagicMock(returncode=0)
         with redirect_stdout(buf):
-            ok = execute(_plan(), _config(tmp_path, flake_enabled=False))
+            ok = execute([_plan()], _config(tmp_path, flake_enabled=False))
     out = buf.getvalue()
     assert ok is False
     assert not mr.called, "no rebuild may be issued when the write was refused"
@@ -344,7 +344,7 @@ def test_executor_reports_an_add_package_exception(tmp_path):
          patch("flakes.executor.add_package", return_value=result), \
          patch("flakes.executor.show_error") as mock_show:
         mr.return_value = MagicMock(returncode=0)
-        ok = execute(_plan(), _config(tmp_path, flake_enabled=False))
+        ok = execute([_plan()], _config(tmp_path, flake_enabled=False))
     assert ok is False
     assert "boom" in str(mock_show.call_args)
 
