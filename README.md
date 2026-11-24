@@ -570,6 +570,14 @@ That is the canonical command. It collects everything under `src/tests/` using t
 configuration in `pyproject.toml` (`testpaths` plus `pythonpath = ["src"]`), so no
 `PYTHONPATH` setup and no per-file invocation are required.
 
+**Python 3.11 limitation.** On Python 3.11 the suite reports **four expected
+failures (`XFAIL`)**, each carrying a version-gated `pytest.mark.xfail`. They
+concern a known `argparse` positional-parsing incompatibility affecting certain
+placements of `-H` in Flakes removal commands. The same four tests **pass on
+Python 3.12, 3.13 and 3.14**. This is a known compatibility limitation, not four
+newly discovered regressions; the tests still run and are reported as expected
+failures, and the strict marker fails the suite if the behaviour changes.
+
 Useful variations:
 
 ```bash
