@@ -25,6 +25,20 @@ def cli_config():
 
 
 @pytest.fixture
+def backup_dir(tmp_path):
+    """An isolated stand-in for the production /etc/nixos/.nx-backup.
+
+    The writer's default backup location is a system directory owned by root.
+    It does not exist on a GitHub runner, and even `mkdir(exist_ok=True)` there
+    would fail for a non-root user. Creating this directory up front means
+    tests never touch the real path, whichever call site forgets to pass it.
+    """
+    path = tmp_path / ".nx-backup"
+    path.mkdir()
+    return path
+
+
+@pytest.fixture
 def run_cli(cli_config):
     """Invoke ``main.main()`` with every handler and subprocess mocked.
 

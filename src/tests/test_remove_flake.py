@@ -113,7 +113,7 @@ def test_round_trip_add_then_remove():
     assert 'nixpkgs' in content
 
 
-def test_rollback_on_rebuild_failure():
+def test_rollback_on_rebuild_failure(backup_dir):
     """rollback should restore the original file when nixos-rebuild fails"""
     original_content = '''{
   inputs = {
@@ -129,26 +129,17 @@ def test_rollback_on_rebuild_failure():
     with tempfile.TemporaryDirectory() as tmpdir:
         flake_file = Path(tmpdir) / "flake.nix"
         flake_file.write_text(original_content)
-        
-        # Create backup in temp dir and mock shutil.copy2
-        backup_dir = Path(tmpdir) / ".nx-backup"
-        backup_dir.mkdir()
-        
+        # backup_dir comes from the shared tmp_path fixture.
         call_count = {"backup": 0, "restore": 0}
         
         original_copy2 = shutil.copy2
         
         def mock_copy2(src, dst):
-            # Redirect copies to our temp backup dir
-            if str(dst).startswith("/etc/nixos/.nx-backup/"):
-                dst = backup_dir / Path(dst).name
-            if str(src).startswith("/etc/nixos/.nx-backup/"):
-                src = backup_dir / Path(src).name
             call_count["backup" if src == flake_file else "restore"] += 1
             return original_copy2(src, dst)
         
         with patch("shutil.copy2", side_effect=mock_copy2):
-            backup_files([flake_file])
+            backup_files([flake_file], backup_dir=backup_dir)
             
             flake_content = flake_file.read_text()
             new_content, found = remove_flake(flake_content, 'plasma-manager')
@@ -157,13 +148,13 @@ def test_rollback_on_rebuild_failure():
             
             assert 'plasma-manager' not in flake_file.read_text()
             
-            restore_files([flake_file])
+            restore_files([flake_file], backup_dir=backup_dir)
         
         restored_content = flake_file.read_text()
         assert restored_content == original_content
 
 
-def test_rollback_includes_multiple_files():
+def test_rollback_includes_multiple_files(backup_dir):
     """rollback should restore all files in the transaction"""
     original_flake = '''{
   inputs = {
@@ -198,20 +189,13 @@ def test_rollback_includes_multiple_files():
         home_file.write_text(original_home)
         
         files = [flake_file, lock_file, home_file]
-        backup_dir = Path(tmpdir) / ".nx-backup"
-        backup_dir.mkdir()
-        
         original_copy2 = shutil.copy2
         
         def mock_copy2(src, dst):
-            if str(dst).startswith("/etc/nixos/.nx-backup/"):
-                dst = backup_dir / Path(dst).name
-            if str(src).startswith("/etc/nixos/.nx-backup/"):
-                src = backup_dir / Path(src).name
             return original_copy2(src, dst)
         
         with patch("shutil.copy2", side_effect=mock_copy2):
-            backup_files(files)
+            backup_files(files, backup_dir=backup_dir)
             
             # Modify all files
             flake_content = flake_file.read_text()
@@ -230,7 +214,7 @@ def test_rollback_includes_multiple_files():
             assert 'plasma-manager' not in home_file.read_text()
             
             # Restore
-            restore_files(files)
+            restore_files(files, backup_dir=backup_dir)
         
         # Verify all restored byte-for-byte
         assert flake_file.read_text() == original_flake
@@ -327,7 +311,7 @@ def test_add_flake_then_remove_reference_round_trip():
     assert 'pkgs.vim' in content
 
 
-def test_rollback_atomicity_on_write_failure():
+def test_rollback_atomicity_on_write_failure(backup_dir):
     """rollback should restore files that failed to write"""
     original_flake = '''{
   inputs = {
@@ -345,20 +329,13 @@ def test_rollback_atomicity_on_write_failure():
         flake_file.write_text(original_flake)
 
         files = [flake_file]
-        backup_dir = Path(tmpdir) / ".nx-backup"
-        backup_dir.mkdir()
-        
         original_copy2 = shutil.copy2
         
         def mock_copy2(src, dst):
-            if str(dst).startswith("/etc/nixos/.nx-backup/"):
-                dst = backup_dir / Path(dst).name
-            if str(src).startswith("/etc/nixos/.nx-backup/"):
-                src = backup_dir / Path(src).name
             return original_copy2(src, dst)
         
         with patch("shutil.copy2", side_effect=mock_copy2):
-            backup_files(files)
+            backup_files(files, backup_dir=backup_dir)
 
             # First write succeeded
             new_content, found = remove_flake(flake_file.read_text(), 'plasma-manager')
@@ -367,13 +344,13 @@ def test_rollback_atomicity_on_write_failure():
             assert 'plasma-manager' not in flake_file.read_text()
 
             # Simulate failure - restore recovers everything
-            restore_files(files)
+            restore_files(files, backup_dir=backup_dir)
 
             # flake.nix returned to original byte-for-byte
             assert flake_file.read_text() == original_flake
 
 
-def test_rollback_when_lock_not_exists_before():
+def test_rollback_when_lock_not_exists_before(backup_dir):
     """rollback doesn't restore flake.lock if it didn't exist before the operation"""
     original_flake = '''{
   inputs = {
@@ -396,20 +373,13 @@ def test_rollback_when_lock_not_exists_before():
 
         # backup only for flake.nix
         files = [flake_file]
-        backup_dir = Path(tmpdir) / ".nx-backup"
-        backup_dir.mkdir()
-        
         original_copy2 = shutil.copy2
         
         def mock_copy2(src, dst):
-            if str(dst).startswith("/etc/nixos/.nx-backup/"):
-                dst = backup_dir / Path(dst).name
-            if str(src).startswith("/etc/nixos/.nx-backup/"):
-                src = backup_dir / Path(src).name
             return original_copy2(src, dst)
         
         with patch("shutil.copy2", side_effect=mock_copy2):
-            backup_files(files)
+            backup_files(files, backup_dir=backup_dir)
 
             # modify flake.nix
             new_content, found = remove_flake(flake_file.read_text(), 'plasma-manager')
@@ -419,7 +389,7 @@ def test_rollback_when_lock_not_exists_before():
             lock_file.write_text('{"nodes": {}}')
 
             # rollback
-            restore_files(files)
+            restore_files(files, backup_dir=backup_dir)
 
             # flake.nix returned to original
             assert flake_file.read_text() == original_flake

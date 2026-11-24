@@ -1,79 +1,56 @@
-import tempfile
-from pathlib import Path
-from unittest.mock import patch
+"""Backup and restore isolation tests.
 
+Every call passes an explicit ``backup_dir`` from the shared fixture, which
+lives under ``tmp_path``. The writer's production default
+(``/etc/nixos/.nx-backup``) is a root-owned system directory that does not
+exist on a CI runner — even ``mkdir(exist_ok=True)`` there would fail.
+"""
+from unittest.mock import patch
 
 from core.writer import backup_files, restore_files
 
 
-def test_backup_creates_backup_dir():
-    """backup_files() should call shutil.copy2 for existing files"""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        test_file = Path(tmpdir) / "test.nix"
-        test_file.write_text("content")
-        
-        # Mock shutil.copy2 to verify it's called
-        with patch("core.writer.shutil.copy2") as mock_copy:
-            backup_files([test_file])
-            mock_copy.assert_called_once()
-            # Verify the source is our file
-            assert mock_copy.call_args[0][0] == test_file
+def test_backup_creates_backup_dir(tmp_path, backup_dir):
+    """backup_files() copies an existing file into the isolated dir."""
+    test_file = tmp_path / "test.nix"
+    test_file.write_text("content")
+
+    with patch("core.writer.shutil.copy2") as mock_copy:
+        backup_files([test_file], backup_dir=backup_dir)
+
+    mock_copy.assert_called_once()
+    assert mock_copy.call_args[0][0] == test_file
+    assert mock_copy.call_args[0][1] == backup_dir / "test.nix"
 
 
-def test_restore_from_backup():
-    """restore_files() should restore content from /etc/nixos/.nx-backup/"""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        test_file = Path(tmpdir) / "test.nix"
-        original = "original content"
-        test_file.write_text(original)
-        
-        # Create a fake backup in /etc/nixos/.nx-backup/ location
-        # Since we can't write there, we mock the path resolution
-        fake_backup_dir = Path(tmpdir) / ".nx-backup"
-        fake_backup_dir.mkdir()
-        (fake_backup_dir / "test.nix").write_text(original)
-        
-        # Modify the original
-        test_file.write_text("modified content")
-        assert test_file.read_text() == "modified content"
-        
-        # Mock the backup_dir to point to our temp dir
-        with patch("core.writer.Path") as mock_path:
-            mock_path.return_value = fake_backup_dir
-            mock_path.side_effect = lambda x: fake_backup_dir if x == "/etc/nixos/.nx-backup" else Path(x)
-            restore_files([test_file])
-        
-        # Since mocking Path is tricky, let's just verify the function exists and accepts the call
-        # The real test is in test_remove_flake.py which tests actual backup/restore
+def test_backup_with_missing_file(tmp_path, backup_dir):
+    """backup_files() ignores a source that does not exist."""
+    missing_file = tmp_path / "nonexistent.nix"
+
+    with patch("core.writer.shutil.copy2") as mock_copy:
+        backup_files([missing_file], backup_dir=backup_dir)
+
+    mock_copy.assert_not_called()
 
 
-def test_backup_with_missing_file():
-    """backup_files() should ignore non-existent files"""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        missing_file = Path(tmpdir) / "nonexistent.nix"
-        
-        with patch("core.writer.shutil.copy2") as mock_copy:
-            backup_files([missing_file])
-            mock_copy.assert_not_called()
+def test_restore_from_backup(tmp_path, backup_dir):
+    """restore_files() copies the saved content back from the isolated dir."""
+    test_file = tmp_path / "test.nix"
+    original = "original content"
+    (backup_dir / "test.nix").write_text(original)
+    test_file.write_text("modified content")
+
+    restore_files([test_file], backup_dir=backup_dir)
+
+    assert test_file.read_text() == original
 
 
-def test_restore_with_missing_backup():
-    """restore_files() should ignore files without a backup"""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        test_file = Path(tmpdir) / "test.nix"
-        test_file.write_text("content")
-        
-        # If backup doesn't exist, copy2 should not be called
-        with patch("core.writer.shutil.copy2") as mock_copy:
-            # Patch Path to simulate missing backup
-            original_path = Path
-            def patched_path(p):
-                result = original_path(p)
-                if str(p) == "/etc/nixos/.nx-backup":
-                    # Return a path that doesn't exist
-                    return original_path(tmpdir) / ".nx-backup-nonexistent"
-                return result
-            
-            with patch("core.writer.Path", side_effect=patched_path):
-                restore_files([test_file])
-                mock_copy.assert_not_called()
+def test_restore_with_missing_backup(tmp_path, backup_dir):
+    """restore_files() ignores a file that has no backup."""
+    test_file = tmp_path / "test.nix"
+    test_file.write_text("content")
+
+    with patch("core.writer.shutil.copy2") as mock_copy:
+        restore_files([test_file], backup_dir=backup_dir)
+
+    mock_copy.assert_not_called()
