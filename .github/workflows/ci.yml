@@ -1,0 +1,19 @@
+name: nxXtend CI
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Inspect runner
+        run: |
+          echo "Hello from GitHub Actions!"
+          echo "Operating System:"
+          uname -a
+          echo "Python version:"
+          python --version
+          echo "Working directory:"
+          pwd
