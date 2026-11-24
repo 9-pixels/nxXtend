@@ -2,20 +2,36 @@ name: nxXtend CI
 
 on:
   push:
-    branches:
-      - ci/initial-workflow
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
 
 jobs:
-  inspect:
+  pytest:
+    name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
 
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+
     steps:
-      - name: Inspect runner
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
         run: |
-          echo "Hello from GitHub Actions!"
-          echo "Operating System:"
-          uname -a
-          echo "Python version:"
-          python --version
-          echo "Working directory:"
-          pwd
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+
+      - name: Run tests
+        run: python -m pytest
