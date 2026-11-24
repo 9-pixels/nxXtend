@@ -1,7 +1,9 @@
 name: nxXtend CI
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - ci/initial-workflow
 
 jobs:
   inspect:
