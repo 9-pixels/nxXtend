@@ -210,14 +210,14 @@ def _show_results_flake_curses(stdscr, packages: list[Package]) -> list[Package]
 
     COL_NUM = 5
     COL_NAME = 32
-    COL_VERSION = 16
-    TABLE_WIDTH = COL_NUM + COL_NAME + COL_VERSION
+    COL_TYPE = 16
+    TABLE_WIDTH = COL_NUM + COL_NAME + COL_TYPE
 
     while True:
         stdscr.erase()
         height, width = stdscr.getmaxyx()
 
-        stdscr.addstr(0, 2, f"{'#':<{COL_NUM}}{'Name':<{COL_NAME}}")
+        stdscr.addstr(0, 2, f"{'#':<{COL_NUM}}{'Name':<{COL_NAME}}{'Type':<{COL_TYPE}}")
         stdscr.addstr(1, 2, "─" * TABLE_WIDTH)
 
         start = page * PAGE_SIZE
@@ -229,7 +229,7 @@ def _show_results_flake_curses(stdscr, packages: list[Package]) -> list[Package]
             if row >= height - 4:
                 break
             name = (pkg.name[:28] + "..") if len(pkg.name) > 30 else pkg.name
-            line = f"{num:<{COL_NUM}}{name:<{COL_NAME}}"
+            line = f"{num:<{COL_NUM}}{name:<{COL_NAME}}{pkg.type:<{COL_TYPE}}"
             if 2 + len(line) < width:
                 stdscr.addstr(row, 2, line)
 
